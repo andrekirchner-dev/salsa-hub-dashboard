@@ -1,64 +1,42 @@
 import { useState } from "react";
-import { Plus, Trash2, Edit2 } from "lucide-react";
+import { ArrowLeft, Plus, Trash2, Edit2, Info } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "@/components/ui/dialog";
-import {
-  Tabs,
-  TabsContent,
-  TabsList,
-  TabsTrigger,
-} from "@/components/ui/tabs";
+import { useNavigate } from "react-router-dom";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
-interface TeamData {
-  id: number;
-  name: string;
-  company: string;
-  memberCount: number;
-  privacy: "Privado" | "Compartilhado";
-  avatar: string;
-}
+const CLEVEL = ["CEO", "CFO", "CMO", "COO"];
+const MANAGEMENT = ["Gerente", "Coordenador"];
+const TEAM_ROLES = ["Analista", "Técnico", "Assistente"];
+const ALL_ROLES = [...CLEVEL, ...MANAGEMENT, ...TEAM_ROLES];
 
-interface TeamMember {
-  id: number;
-  name: string;
-  email: string;
-  role: "Gerente" | "Membro" | "Visualizador";
-  joinedDate: string;
-}
+const CURRENT_ROLE = "CEO";
+const canManageTeam = (role: string) => CLEVEL.includes(role) || MANAGEMENT.includes(role);
+const canFullControl = (role: string) => CLEVEL.includes(role);
+const isReadOnly = (role: string) => TEAM_ROLES.includes(role);
 
-interface Project {
-  id: number;
-  name: string;
-  status: string;
-  progress: number;
-}
+const getRoleColor = (role: string) => {
+  if (CLEVEL.includes(role)) return "bg-primary/20 text-primary";
+  if (MANAGEMENT.includes(role)) return "bg-purple-500/20 text-purple-400";
+  return "bg-blue-500/20 text-blue-400";
+};
 
-interface TaskItem {
-  id: number;
-  title: string;
-  column: "todo" | "doing" | "done";
-  assignee: string;
-  dueDate: string;
-}
+interface TeamMember { id: number; name: string; email: string; role: string; }
+interface Project { id: number; name: string; status: string; progress: number; }
+interface TaskItem { id: number; title: string; column: "todo" | "doing" | "done"; assignee: string; dueDate: string; }
 
-const mockTeams: TeamData[] = [
+const mockTeams = [
   { id: 1, name: "Salsa Digital", company: "Salsa Digital", memberCount: 6, privacy: "Privado", avatar: "SD" },
   { id: 2, name: "Agência Parceira X", company: "Agência X", memberCount: 4, privacy: "Compartilhado", avatar: "AP" },
 ];
 
 const mockMembers: TeamMember[] = [
-  { id: 1, name: "André Pereira", email: "andre@salsahub.com", role: "Gerente", joinedDate: "Jan 2024" },
-  { id: 2, name: "Mariana Silva", email: "mariana@salsahub.com", role: "Membro", joinedDate: "Feb 2024" },
-  { id: 3, name: "Carlos Mendes", email: "carlos@salsahub.com", role: "Membro", joinedDate: "Feb 2024" },
-  { id: 4, name: "Ana Costa", email: "ana@salsahub.com", role: "Visualizador", joinedDate: "Mar 2024" },
+  { id: 1, name: "André Pereira", email: "andre@salsahub.com", role: "CEO" },
+  { id: 2, name: "Mariana Silva", email: "mariana@salsahub.com", role: "CMO" },
+  { id: 3, name: "Carlos Mendes", email: "carlos@salsahub.com", role: "Gerente" },
+  { id: 4, name: "Ana Costa", email: "ana@salsahub.com", role: "Analista" },
 ];
 
 const mockProjects: Project[] = [
@@ -74,193 +52,189 @@ const mockTasks: TaskItem[] = [
   { id: 4, title: "Deployar versão beta", column: "done", assignee: "Carlos", dueDate: "Mar 28" },
 ];
 
-const getRoleColor = (role: string) => {
-  switch (role) {
-    case "Gerente": return "bg-purple-500/20 text-purple-400";
-    case "Membro": return "bg-blue-500/20 text-blue-400";
-    case "Visualizador": return "bg-gray-500/20 text-gray-400";
-    default: return "bg-gray-500/20 text-gray-400";
-  }
-};
-
+const tabItems = [
+  { value: "members", label: "Membros", emoji: "👥" },
+  { value: "projects", label: "Projetos", emoji: "📦" },
+  { value: "tasks", label: "Tarefas", emoji: "✅" },
+  { value: "privacy", label: "Privacidade", emoji: "🔒" },
+  { value: "settings", label: "Config.", emoji: "⚙️" },
+];
 export default function Team() {
-  const [selectedTeam, setSelectedTeam] = useState<number>(1);
+  const navigate = useNavigate();
+  const [selectedTeam, setSelectedTeam] = useState(1);
   const [tasks] = useState<TaskItem[]>(mockTasks);
-
-  const currentTeam = mockTeams.find((t) => t.id === selectedTeam);
-  const todoTasks = tasks.filter((t) => t.column === "todo");
-  const doingTasks = tasks.filter((t) => t.column === "doing");
-  const doneTasks = tasks.filter((t) => t.column === "done");
+  const currentTeam = mockTeams.find(t => t.id === selectedTeam)!;
+  const todoTasks = tasks.filter(t => t.column === "todo");
+  const doingTasks = tasks.filter(t => t.column === "doing");
+  const doneTasks = tasks.filter(t => t.column === "done");
 
   return (
-    <div className="min-h-screen bg-background p-4 md:p-8">
-      <div className="max-w-6xl mx-auto">
-        <div className="flex items-center justify-between mb-8">
-          <h1 className="text-3xl font-bold text-foreground font-sans">Equipe</h1>
-          <Dialog>
-            <DialogTrigger asChild>
-              <Button className="rounded-2xl bg-primary hover:bg-primary/80 text-background">
-                <Plus className="w-4 h-4 mr-2" />
-                Criar Equipe
-              </Button>
-            </DialogTrigger>
-            <DialogContent className="bg-surface-low border-surface-mid">
-              <DialogHeader><DialogTitle>Criar Nova Equipe</DialogTitle></DialogHeader>
-              <div className="space-y-4">
-                <div>
-                  <label className="text-sm text-muted-foreground block mb-2">Nome da Equipe</label>
-                  <Input placeholder="ex: Marketing Digital" className="bg-surface-mid border-0 rounded-xl text-sm" />
+    <div className="min-h-screen bg-background">
+      <div className="p-4 md:p-8 max-w-5xl mx-auto">
+        <div className="flex items-center gap-3 mb-6">
+          <button onClick={() => navigate(-1)} className="p-2 rounded-xl hover:bg-surface-mid transition-colors">
+            <ArrowLeft className="w-5 h-5 text-foreground" />
+          </button>
+          <h1 className="text-2xl font-bold text-foreground font-sans flex-1">Equipe</h1>
+          {canFullControl(CURRENT_ROLE) && (
+            <Dialog>
+              <DialogTrigger asChild>
+                <Button className="rounded-2xl bg-primary hover:bg-primary/80 text-background text-sm">
+                  <Plus className="w-4 h-4 mr-1" />
+                  Nova Equipe
+                </Button>
+              </DialogTrigger>
+              <DialogContent className="bg-surface-low border-surface-mid">
+                <DialogHeader><DialogTitle>Criar Nova Equipe</DialogTitle></DialogHeader>
+                <div className="space-y-4">
+                  <Input placeholder="Nome da equipe" className="bg-surface-mid border-0 rounded-xl text-sm" />
+                  <Input placeholder="Empresa" className="bg-surface-mid border-0 rounded-xl text-sm" />
+                  <Button className="w-full rounded-xl bg-primary hover:bg-primary/80">Criar Equipe</Button>
                 </div>
-                <div>
-                  <label className="text-sm text-muted-foreground block mb-2">Empresa</label>
-                  <Input placeholder="ex: Salsa Digital" className="bg-surface-mid border-0 rounded-xl text-sm" />
-                </div>
-                <Button className="w-full rounded-xl bg-primary hover:bg-primary/80">Criar Equipe</Button>
-              </div>
-            </DialogContent>
-          </Dialog>
+              </DialogContent>
+            </Dialog>
+          )}
         </div>
 
-        <div className="mb-8">
-          <h2 className="text-lg font-semibold text-foreground mb-4 font-sans">Minhas Equipes</h2>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            {mockTeams.map((team) => (
-              <button
-                key={team.id}
-                onClick={() => setSelectedTeam(team.id)}
-                className={"p-6 rounded-3xl border-2 transition-all text-left " + (selectedTeam === team.id ? "border-primary bg-surface-mid" : "border-surface-mid bg-surface-low hover:border-surface-high")}
-              >
-                <div className="flex items-center gap-4 mb-4">
-                  <div className="w-12 h-12 rounded-full bg-primary/20 text-primary flex items-center justify-center font-semibold">{team.avatar}</div>
-                  <div className="flex-1 min-w-0">
-                    <h3 className="font-semibold text-foreground">{team.name}</h3>
-                    <p className="text-xs text-muted-foreground">{team.company}</p>
-                  </div>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-sm text-muted-foreground">{team.memberCount} membros</span>
-                  <Badge variant="secondary" className={"text-xs " + (team.privacy === "Privado" ? "bg-red-500/20 text-red-400" : "bg-green-500/20 text-green-400")}>{team.privacy}</Badge>
-                </div>
-              </button>
-            ))}
-          </div>
+        <div className="flex items-center gap-2 mb-4 p-3 bg-primary/5 rounded-2xl border border-primary/20">
+          <Info className="w-4 h-4 text-primary flex-shrink-0" />
+          <p className="text-xs text-muted-foreground">
+            Você está como <Badge className={"text-xs inline-flex " + getRoleColor(CURRENT_ROLE)}>{CURRENT_ROLE}</Badge> —
+            {canFullControl(CURRENT_ROLE) ? " acesso completo: criar/modificar equipes e atribuir qualquer cargo." :
+              canManageTeam(CURRENT_ROLE) ? " pode adicionar/remover membros e atribuir tarefas." :
+                " apenas visualizar, adicionar arquivos e acompanhar produtos."}
+          </p>
         </div>
 
-        {currentTeam && (
-          <div className="bg-surface-low rounded-3xl border border-surface-mid overflow-hidden">
-            <div className="p-6 md:p-8 border-b border-surface-mid">
-              <div className="flex items-center gap-4">
-                <div className="w-16 h-16 rounded-full bg-primary/20 text-primary flex items-center justify-center font-bold text-xl">{currentTeam.avatar}</div>
-                <div>
-                  <h2 className="text-2xl font-bold text-foreground">{currentTeam.name}</h2>
-                  <p className="text-muted-foreground">{currentTeam.company}</p>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-6">
+          {mockTeams.map(team => (
+            <button
+              key={team.id}
+              onClick={() => setSelectedTeam(team.id)}
+              className={"p-5 rounded-3xl border-2 transition-all text-left " + (selectedTeam === team.id ? "border-primary bg-surface-mid" : "border-surface-mid bg-surface-low hover:border-surface-high")}
+            >
+              <div className="flex items-center gap-3 mb-3">
+                <div className="w-10 h-10 rounded-full bg-primary/20 text-primary flex items-center justify-center font-bold">{team.avatar}</div>
+                <div className="flex-1 min-w-0">
+                  <p className="font-semibold text-foreground truncate">{team.name}</p>
+                  <p className="text-xs text-muted-foreground">{team.company}</p>
                 </div>
               </div>
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-muted-foreground">{team.memberCount} membros</span>
+                <Badge className={"text-xs " + (team.privacy === "Privado" ? "bg-red-500/20 text-red-400" : "bg-green-500/20 text-green-400")}>{team.privacy}</Badge>
+              </div>
+            </button>
+          ))}
+        </div>
+
+        <div className="bg-surface-low rounded-3xl border border-surface-mid overflow-hidden">
+          <div className="p-5 border-b border-surface-mid flex items-center gap-3">
+            <div className="w-12 h-12 rounded-full bg-primary/20 text-primary flex items-center justify-center font-bold">{currentTeam.avatar}</div>
+            <div>
+              <h2 className="font-bold text-foreground">{currentTeam.name}</h2>
+              <p className="text-xs text-muted-foreground">{currentTeam.company}</p>
             </div>
+          </div>
+          <div className="p-4 md:p-6">
+            <Tabs defaultValue="members" className="w-full">
+              <TabsList asChild>
+                <div className="grid grid-cols-5 gap-2 mb-5">
+                  {tabItems.map(tab => (
+                    <TabsTrigger
+                      key={tab.value}
+                      value={tab.value}
+                      className="flex flex-col items-center gap-0.5 py-2.5 bg-surface-mid border border-surface-mid rounded-2xl text-[11px] font-medium text-muted-foreground data-[state=active]:bg-primary data-[state=active]:text-background data-[state=active]:border-primary transition-all"
+                    >
+                      <span className="text-sm">{tab.emoji}</span>
+                      <span>{tab.label}</span>
+                    </TabsTrigger>
+                  ))}
+                </div>
+              </TabsList>
 
-            <div className="p-6 md:p-8">
-              <Tabs defaultValue="members" className="w-full">
-                <TabsList className="mb-6 flex gap-2 border-b border-surface-mid overflow-x-auto pb-0">
-                  <TabsTrigger value="members" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-4 py-2">Membros</TabsTrigger>
-                  <TabsTrigger value="projects" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-4 py-2">Projetos</TabsTrigger>
-                  <TabsTrigger value="tasks" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-4 py-2">Tarefas</TabsTrigger>
-                  <TabsTrigger value="privacy" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-4 py-2">Privacidade</TabsTrigger>
-                  <TabsTrigger value="settings" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-4 py-2">Configurações</TabsTrigger>
-                </TabsList>
-
-                <TabsContent value="members" className="space-y-4">
-                  <div className="flex items-center justify-between mb-4">
-                    <h3 className="font-semibold text-foreground">Membros da Equipe</h3>
+              <TabsContent value="members" className="space-y-3">
+                {canManageTeam(CURRENT_ROLE) && (
+                  <div className="flex justify-end">
                     <Dialog>
                       <DialogTrigger asChild>
-                        <Button size="icon" className="rounded-2xl bg-primary hover:bg-primary/80"><Plus className="w-4 h-4" /></Button>
+                        <Button size="sm" className="rounded-2xl bg-primary hover:bg-primary/80">
+                          <Plus className="w-4 h-4 mr-1" />Adicionar
+                        </Button>
                       </DialogTrigger>
                       <DialogContent className="bg-surface-low border-surface-mid">
                         <DialogHeader><DialogTitle>Adicionar Membro</DialogTitle></DialogHeader>
                         <div className="space-y-4">
                           <Input placeholder="Email do membro" className="bg-surface-mid border-0 rounded-xl text-sm" />
                           <select className="w-full bg-surface-mid border-0 rounded-xl p-2 text-foreground text-sm">
-                            <option>Membro</option>
-                            <option>Gerente</option>
-                            <option>Visualizador</option>
+                            {(canFullControl(CURRENT_ROLE) ? ALL_ROLES : TEAM_ROLES).map(r => <option key={r}>{r}</option>)}
                           </select>
                           <Button className="w-full rounded-xl bg-primary hover:bg-primary/80">Adicionar</Button>
                         </div>
                       </DialogContent>
                     </Dialog>
                   </div>
-                  <div className="space-y-3">
-                    {mockMembers.map((member) => (
-                      <div key={member.id} className="flex items-center justify-between p-4 rounded-2xl bg-surface-mid hover:bg-surface-high transition-colors">
-                        <div className="flex items-center gap-3 flex-1">
-                          <div className="w-10 h-10 rounded-full bg-primary/20 text-primary flex items-center justify-center font-semibold text-xs">{member.name.split(" ").map((n) => n[0]).join("")}</div>
-                          <div className="flex-1 min-w-0">
-                            <p className="text-sm font-medium text-foreground">{member.name}</p>
-                            <p className="text-xs text-muted-foreground">{member.email}</p>
-                          </div>
-                          <Badge variant="secondary" className={"text-xs flex-shrink-0 " + getRoleColor(member.role)}>{member.role}</Badge>
-                        </div>
-                        <div className="flex gap-2 ml-2">
-                          <Button variant="ghost" size="icon" className="h-8 w-8 rounded-lg"><Edit2 className="w-4 h-4 text-muted-foreground" /></Button>
-                          <Button variant="ghost" size="icon" className="h-8 w-8 rounded-lg text-red-400 hover:text-red-300"><Trash2 className="w-4 h-4" /></Button>
-                        </div>
+                )}
+                {mockMembers.map(member => (
+                  <div key={member.id} className="flex items-center gap-3 p-3 rounded-2xl bg-surface-mid hover:bg-surface-high transition-colors">
+                    <div className="w-9 h-9 rounded-full bg-primary/20 text-primary flex items-center justify-center font-semibold text-xs flex-shrink-0">
+                      {member.name.split(" ").map(n => n[0]).join("").slice(0, 2)}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium text-foreground truncate">{member.name}</p>
+                      <p className="text-xs text-muted-foreground truncate">{member.email}</p>
+                    </div>
+                    <Badge className={"text-xs flex-shrink-0 " + getRoleColor(member.role)}>{member.role}</Badge>
+                    {canManageTeam(CURRENT_ROLE) && (
+                      <div className="flex gap-1 flex-shrink-0">
+                        <Button variant="ghost" size="icon" className="h-7 w-7 rounded-lg"><Edit2 className="w-3.5 h-3.5 text-muted-foreground" /></Button>
+                        <Button variant="ghost" size="icon" className="h-7 w-7 rounded-lg text-red-400"><Trash2 className="w-3.5 h-3.5" /></Button>
                       </div>
-                    ))}
+                    )}
                   </div>
-                  <div className="mt-6 p-4 bg-surface-mid rounded-2xl">
-                    <h4 className="text-sm font-semibold text-foreground mb-3">Matriz de Permissões</h4>
-                    <div className="space-y-2 text-xs">
-                      <div className="flex justify-between"><span className="text-muted-foreground">Gerentes podem:</span><span className="text-primary">Editar tudo</span></div>
-                      <div className="flex justify-between"><span className="text-muted-foreground">Membros podem:</span><span className="text-primary">Editar projetos e tarefas</span></div>
-                      <div className="flex justify-between"><span className="text-muted-foreground">Visualizadores podem:</span><span className="text-primary">Apenas visualizar</span></div>
+                ))}
+                <div className="bg-surface-mid rounded-2xl p-3 mt-2">
+                  <p className="text-xs font-semibold text-foreground mb-2">Permissões por cargo</p>
+                  <div className="space-y-1.5 text-xs">
+                    <div className="flex justify-between"><span className="text-muted-foreground">CEO / CFO / CMO / COO</span><span className="text-primary">Controle total</span></div>
+                    <div className="flex justify-between"><span className="text-muted-foreground">Gerentes / Coordenadores</span><span className="text-purple-400">Membros + Tarefas</span></div>
+                    <div className="flex justify-between"><span className="text-muted-foreground">Analistas / Técnicos / Assistentes</span><span className="text-blue-400">Visualizar + Arquivos</span></div>
+                  </div>
+                </div>
+              </TabsContent>
+
+              <TabsContent value="projects" className="space-y-3">
+                {canManageTeam(CURRENT_ROLE) && (
+                  <div className="flex justify-end">
+                    <Button size="sm" className="rounded-2xl bg-primary hover:bg-primary/80">
+                      <Plus className="w-4 h-4 mr-1" />Vincular Produto
+                    </Button>
+                  </div>
+                )}
+                {mockProjects.map(p => (
+                  <div key={p.id} className="bg-surface-mid rounded-2xl p-4">
+                    <div className="flex items-center justify-between mb-2">
+                      <div>
+                        <p className="font-medium text-foreground text-sm">{p.name}</p>
+                        <p className="text-xs text-muted-foreground">{p.status}</p>
+                      </div>
+                      <span className="text-sm font-bold text-primary">{p.progress}%</span>
+                    </div>
+                    <div className="w-full h-1.5 bg-background rounded-full overflow-hidden">
+                      <div className="h-full bg-primary" style={{ width: p.progress + "%" }} />
                     </div>
                   </div>
-                </TabsContent>
+                ))}
+              </TabsContent>
 
-                <TabsContent value="projects" className="space-y-4">
-                  <div className="flex items-center justify-between mb-4">
-                    <h3 className="font-semibold text-foreground">Projetos Vinculados</h3>
+              <TabsContent value="tasks" className="space-y-4">
+                {canManageTeam(CURRENT_ROLE) && (
+                  <div className="flex justify-end">
                     <Dialog>
                       <DialogTrigger asChild>
-                        <Button size="icon" className="rounded-2xl bg-primary hover:bg-primary/80"><Plus className="w-4 h-4" /></Button>
-                      </DialogTrigger>
-                      <DialogContent className="bg-surface-low border-surface-mid">
-                        <DialogHeader><DialogTitle>Vincular Produto</DialogTitle></DialogHeader>
-                        <div className="space-y-4">
-                          <select className="w-full bg-surface-mid border-0 rounded-xl p-2 text-foreground text-sm">
-                            <option>Selecione um produto...</option>
-                            <option>App Delivery</option>
-                            <option>Salsa Store</option>
-                          </select>
-                          <Button className="w-full rounded-xl bg-primary hover:bg-primary/80">Vincular</Button>
-                        </div>
-                      </DialogContent>
-                    </Dialog>
-                  </div>
-                  <div className="space-y-3">
-                    {mockProjects.map((project) => (
-                      <div key={project.id} className="p-4 rounded-2xl bg-surface-mid hover:bg-surface-high transition-colors">
-                        <div className="flex items-start justify-between mb-3">
-                          <div>
-                            <h4 className="font-medium text-foreground">{project.name}</h4>
-                            <p className="text-xs text-muted-foreground">{project.status}</p>
-                          </div>
-                          <Badge variant="secondary" className="text-xs bg-surface-high text-muted-foreground">{project.progress}%</Badge>
-                        </div>
-                        <div className="w-full h-2 bg-background rounded-full overflow-hidden">
-                          <div className="h-full bg-primary" style={{ width: project.progress + "%" }} />
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </TabsContent>
-
-                <TabsContent value="tasks" className="space-y-4">
-                  <div className="flex items-center justify-between mb-4">
-                    <h3 className="font-semibold text-foreground">Kanban</h3>
-                    <Dialog>
-                      <DialogTrigger asChild>
-                        <Button size="icon" className="rounded-2xl bg-primary hover:bg-primary/80"><Plus className="w-4 h-4" /></Button>
+                        <Button size="sm" className="rounded-2xl bg-primary hover:bg-primary/80">
+                          <Plus className="w-4 h-4 mr-1" />Nova Tarefa
+                        </Button>
                       </DialogTrigger>
                       <DialogContent className="bg-surface-low border-surface-mid">
                         <DialogHeader><DialogTitle>Adicionar Tarefa</DialogTitle></DialogHeader>
@@ -268,7 +242,7 @@ export default function Team() {
                           <Input placeholder="Título da tarefa" className="bg-surface-mid border-0 rounded-xl text-sm" />
                           <select className="w-full bg-surface-mid border-0 rounded-xl p-2 text-foreground text-sm">
                             <option>Atribuir a...</option>
-                            {mockMembers.map((m) => (<option key={m.id}>{m.name}</option>))}
+                            {mockMembers.map(m => <option key={m.id}>{m.name}</option>)}
                           </select>
                           <Input type="date" className="bg-surface-mid border-0 rounded-xl text-sm" />
                           <Button className="w-full rounded-xl bg-primary hover:bg-primary/80">Adicionar</Button>
@@ -276,115 +250,92 @@ export default function Team() {
                       </DialogContent>
                     </Dialog>
                   </div>
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                    <div className="bg-surface-mid rounded-2xl p-4">
-                      <h4 className="font-semibold text-foreground mb-3 text-sm">A Fazer</h4>
+                )}
+                <div className="grid grid-cols-3 gap-3">
+                  {[
+                    { label: "A Fazer", tasks: todoTasks, color: "text-muted-foreground" },
+                    { label: "Em Andamento", tasks: doingTasks, color: "text-primary", active: true },
+                    { label: "Concluído", tasks: doneTasks, color: "text-green-400" },
+                  ].map(col => (
+                    <div key={col.label} className="bg-surface-mid rounded-2xl p-3">
+                      <p className={"text-xs font-semibold mb-2 " + col.color}>{col.label}</p>
                       <div className="space-y-2">
-                        {todoTasks.map((task) => (
-                          <div key={task.id} className="p-3 bg-background rounded-xl hover:bg-surface-high transition-colors">
-                            <p className="text-sm text-foreground mb-2">{task.title}</p>
-                            <div className="flex items-center justify-between">
-                              <span className="text-xs text-muted-foreground">{task.assignee}</span>
-                              <span className="text-xs text-muted-foreground">{task.dueDate}</span>
+                        {col.tasks.map(task => (
+                          <div key={task.id} className={"p-2.5 bg-background rounded-xl " + (col.active ? "border-l-2 border-primary" : "")}>
+                            <p className={"text-xs text-foreground mb-1 " + (col.label === "Concluído" ? "line-through opacity-60" : "")}>{task.title}</p>
+                            <div className="flex justify-between items-center">
+                              <span className="text-[10px] text-muted-foreground">{task.assignee}</span>
+                              <span className="text-[10px] text-muted-foreground">{task.dueDate}</span>
                             </div>
                           </div>
                         ))}
                       </div>
                     </div>
-                    <div className="bg-surface-mid rounded-2xl p-4">
-                      <h4 className="font-semibold text-foreground mb-3 text-sm">Em Andamento</h4>
-                      <div className="space-y-2">
-                        {doingTasks.map((task) => (
-                          <div key={task.id} className="p-3 bg-background rounded-xl border-l-2 border-primary hover:bg-surface-high transition-colors">
-                            <p className="text-sm text-foreground mb-2">{task.title}</p>
-                            <div className="flex items-center justify-between">
-                              <span className="text-xs text-muted-foreground">{task.assignee}</span>
-                              <span className="text-xs text-muted-foreground">{task.dueDate}</span>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                    <div className="bg-surface-mid rounded-2xl p-4">
-                      <h4 className="font-semibold text-foreground mb-3 text-sm">Concluído</h4>
-                      <div className="space-y-2">
-                        {doneTasks.map((task) => (
-                          <div key={task.id} className="p-3 bg-background rounded-xl opacity-60 hover:bg-surface-high transition-colors">
-                            <p className="text-sm text-foreground mb-2 line-through">{task.title}</p>
-                            <div className="flex items-center justify-between">
-                              <span className="text-xs text-muted-foreground">{task.assignee}</span>
-                              <span className="text-xs text-muted-foreground">{task.dueDate}</span>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  </div>
-                </TabsContent>
+                  ))}
+                </div>
+              </TabsContent>
 
-                <TabsContent value="privacy" className="space-y-4">
-                  <div className="p-4 bg-surface-mid rounded-2xl">
-                    <h4 className="font-semibold text-foreground mb-4">Configurações de Privacidade</h4>
-                    <div className="space-y-4">
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <p className="text-sm font-medium text-foreground">Equipe Privada</p>
-                          <p className="text-xs text-muted-foreground">Apenas membros podem acessar</p>
-                        </div>
-                        <input type="checkbox" defaultChecked className="w-4 h-4" />
-                      </div>
-                      <div className="border-t border-background pt-4">
-                        <p className="text-sm font-medium text-foreground mb-3">Equipes com Acesso</p>
-                        <Button variant="outline" size="sm" className="rounded-xl text-primary border-primary/50">
-                          <Plus className="w-3 h-3 mr-2" />
-                          Adicionar Equipe
-                        </Button>
-                      </div>
-                      <div className="border-t border-background pt-4">
-                        <p className="text-sm font-medium text-foreground mb-3">Projetos Compartilhados</p>
-                        <div className="space-y-2">
-                          {mockProjects.map((project) => (
-                            <label key={project.id} className="flex items-center gap-3 text-sm cursor-pointer">
-                              <input type="checkbox" className="w-4 h-4" />
-                              <span className="text-foreground">{project.name}</span>
-                            </label>
-                          ))}
-                        </div>
-                      </div>
+              <TabsContent value="privacy" className="space-y-4">
+                <div className="bg-surface-mid rounded-2xl p-4 space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-sm font-medium text-foreground">Equipe Privada</p>
+                      <p className="text-xs text-muted-foreground">Apenas membros podem acessar</p>
                     </div>
+                    <input type="checkbox" defaultChecked className="w-4 h-4" />
                   </div>
-                </TabsContent>
+                  <div className="border-t border-background pt-3">
+                    <p className="text-sm font-medium text-foreground mb-2">Compartilhamento entre empresas</p>
+                    <p className="text-xs text-muted-foreground mb-3">Empresas parceiras podem ver informações, equipes e membros conforme configurado pelo CEO/C-Level.</p>
+                    {canFullControl(CURRENT_ROLE) && (
+                      <Button variant="outline" size="sm" className="rounded-xl text-primary border-primary/50">
+                        <Plus className="w-3 h-3 mr-2" />Adicionar Empresa Parceira
+                      </Button>
+                    )}
+                  </div>
+                  <div className="border-t border-background pt-3">
+                    <p className="text-sm font-medium text-foreground mb-2">Projetos Compartilhados</p>
+                    {mockProjects.map(p => (
+                      <label key={p.id} className="flex items-center gap-2 py-1.5 cursor-pointer">
+                        <input type="checkbox" className="w-4 h-4" disabled={!canFullControl(CURRENT_ROLE)} />
+                        <span className="text-sm text-foreground">{p.name}</span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              </TabsContent>
 
-                <TabsContent value="settings" className="space-y-4">
-                  <div className="p-4 bg-surface-mid rounded-2xl space-y-4">
-                    <div>
-                      <label className="text-sm text-muted-foreground block mb-2">Nome da Equipe</label>
-                      <Input value={currentTeam.name} className="bg-background border-0 rounded-xl text-sm" readOnly />
+              <TabsContent value="settings" className="space-y-4">
+                {canFullControl(CURRENT_ROLE) ? (
+                  <>
+                    <div className="bg-surface-mid rounded-2xl p-4 space-y-4">
+                      <div>
+                        <label className="text-xs text-muted-foreground block mb-1.5">Nome da Equipe</label>
+                        <Input defaultValue={currentTeam.name} className="bg-background border-0 rounded-xl text-sm" />
+                      </div>
+                      <div>
+                        <label className="text-xs text-muted-foreground block mb-1.5">Empresa</label>
+                        <Input defaultValue={currentTeam.company} className="bg-background border-0 rounded-xl text-sm" />
+                      </div>
+                      <Button className="w-full rounded-xl bg-primary hover:bg-primary/80">Salvar</Button>
                     </div>
-                    <div>
-                      <label className="text-sm text-muted-foreground block mb-2">Empresa</label>
-                      <Input value={currentTeam.company} className="bg-background border-0 rounded-xl text-sm" readOnly />
+                    <div className="bg-surface-mid rounded-2xl p-4 border border-red-500/20">
+                      <p className="text-sm font-semibold text-red-400 mb-3">Zona de Perigo</p>
+                      <div className="space-y-2">
+                        <Button variant="outline" className="w-full rounded-xl text-red-400 border-red-500/30">Arquivar Equipe</Button>
+                        <Button variant="outline" className="w-full rounded-xl text-red-400 border-red-500/30">Excluir Equipe</Button>
+                      </div>
                     </div>
-                    <div>
-                      <label className="text-sm text-muted-foreground block mb-2">Cor do Avatar</label>
-                      <input type="color" defaultValue="#91f78e" className="w-12 h-12 rounded-xl cursor-pointer" />
-                    </div>
-                    <div className="border-t border-background pt-4">
-                      <Button variant="outline" className="w-full rounded-xl text-foreground border-surface-high hover:bg-surface-high">Transferir Gerência</Button>
-                    </div>
+                  </>
+                ) : (
+                  <div className="text-center py-10 text-muted-foreground">
+                    <p className="text-sm">Apenas CEO, CFO, CMO ou COO podem alterar configurações da equipe.</p>
                   </div>
-                  <div className="p-4 bg-surface-mid rounded-2xl border border-red-500/20">
-                    <h4 className="text-sm font-semibold text-red-400 mb-3">Zona de Perigo</h4>
-                    <div className="space-y-2">
-                      <Button variant="outline" className="w-full rounded-xl text-red-400 border-red-500/30 hover:bg-red-500/10">Arquivar Equipe</Button>
-                      <Button variant="outline" className="w-full rounded-xl text-red-400 border-red-500/30 hover:bg-red-500/10">Excluir Equipe</Button>
-                    </div>
-                  </div>
-                </TabsContent>
-              </Tabs>
-            </div>
+                )}
+              </TabsContent>
+            </Tabs>
           </div>
-        )}
+        </div>
       </div>
     </div>
   );
