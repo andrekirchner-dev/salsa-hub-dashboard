@@ -1,89 +1,127 @@
+import { useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { TrendingUp, Calendar, Package, Users, ChevronDown, ChevronUp, ListTodo } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
-import { TrendingUp, Package, Calendar, Megaphone } from "lucide-react";
 
-const mockTasks = [
-  { id: 1, title: "Revisar campanha App Delivery", deadline: "hoje", completed: false },
-  { id: 2, title: "Atualizar briefing Salsa Store", deadline: "concluída", completed: true },
-  { id: 3, title: "Reunião com equipe design", deadline: "14h", completed: false },
-  { id: 4, title: "Aprovar landing page", deadline: "amanhã", completed: false },
-];
-
-const mockProducts = [
-  { id: 1, name: "App Salsa Delivery", type: "App / SaaS", progress: 72, status: "ativo" },
-  { id: 2, name: "Curso Marketing Digital", type: "Infoproduto", progress: 45, status: "ativo" },
-  { id: 3, name: "Loja Salsa Store", type: "E-commerce", progress: 90, status: "ativo" },
-  { id: 4, name: "Landing Salsa Pro", type: "Landing Page", progress: 100, status: "lançado" },
+const tasks = [
+  { id: 1, label: "Revisar briefing do App Delivery", priority: "Alta" },
+  { id: 2, label: "Enviar proposta para cliente", priority: "Alta" },
+  { id: 3, label: "Atualizar landing page", priority: "Media" },
+  { id: 4, label: "Reuniao de alinhamento com equipe", priority: "Media" },
 ];
 
 const statCards = [
-  { title: "Campanhas Ativas", value: "12", icon: Megaphone, color: "text-blue-400", url: "/marketing" },
-  { title: "Reuniões Hoje", value: "3", icon: Calendar, color: "text-primary", url: "/calendar" },
-  { title: "Produtos Ativos", value: "8", icon: Package, color: "text-yellow-400", url: "/products" },
-  { title: "Leads Esta Semana", value: "47", icon: TrendingUp, color: "text-purple-400", url: "/marketing" },
+  { label: "Campanhas Ativas", value: "3", icon: TrendingUp, color: "text-primary", bg: "bg-primary/10", route: "/marketing" },
+  { label: "Reunioes Hoje", value: "4", icon: Calendar, color: "text-blue-400", bg: "bg-blue-500/10", route: "/calendar" },
+  { label: "Produtos Ativos", value: "7", icon: Package, color: "text-purple-400", bg: "bg-purple-500/10", route: "/products" },
+  { label: "Leads Esta Semana", value: "128", icon: Users, color: "text-yellow-400", bg: "bg-yellow-500/10", route: "/marketing" },
 ];
 
-export default function Dashboard() {
+export default function Index() {
   const navigate = useNavigate();
+  const [tasksDone, setTasksDone] = useState<number[]>([3]);
+  const [tasksOpen, setTasksOpen] = useState(false);
+
+  const pendingCount = tasks.filter(t => !tasksDone.includes(t.id)).length;
+
+  const toggleTask = (id: number) => {
+    setTasksDone(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+  };
+
   return (
-    <div className="min-h-screen bg-background p-4 md:p-8">
-      <div className="max-w-6xl mx-auto space-y-8">
-        <div className="space-y-1">
-          <h1 className="text-3xl font-bold text-foreground font-sans">Olá, André 👋</h1>
-          <p className="text-muted-foreground">Bem-vindo de volta ao SalsaHub</p>
+    <div className="p-4 md:p-8 max-w-5xl mx-auto space-y-5">
+      <div className="flex items-start justify-between">
+        <div>
+          <p className="text-muted-foreground text-sm">Bom dia,</p>
+          <h1 className="text-2xl font-bold text-foreground font-sans">Andre</h1>
         </div>
+        <div className="text-right">
+          <p className="text-xs text-muted-foreground">Terca-feira</p>
+          <p className="text-xs text-muted-foreground">31 de Marco</p>
+        </div>
+      </div>
 
-        <div className="bg-surface-low rounded-3xl p-6">
-          <h2 className="text-lg font-semibold text-foreground mb-4 font-sans">Suas Tarefas</h2>
-          <div className="space-y-2">
-            {mockTasks.map((task) => (
-              <div key={task.id} className="flex items-center gap-4 p-3 rounded-2xl hover:bg-surface-mid transition-colors">
-                <Checkbox checked={task.completed} className="h-5 w-5 rounded border-primary" />
-                <p className={`text-sm font-medium flex-1 ${task.completed ? "text-muted-foreground line-through" : "text-foreground"}`}>{task.title}</p>
-                <Badge variant="secondary" className="text-xs bg-surface-high text-muted-foreground flex-shrink-0">{task.deadline}</Badge>
+      {/* Tasks Drawer */}
+      <div className="bg-surface-low rounded-3xl border border-surface-mid overflow-hidden">
+        <button
+          onClick={() => setTasksOpen(!tasksOpen)}
+          className="w-full flex items-center justify-between p-4 hover:bg-surface-mid transition-colors"
+        >
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-2xl bg-primary/15 flex items-center justify-center">
+              <ListTodo className="w-5 h-5 text-primary" />
+            </div>
+            <span className="font-semibold text-foreground">Suas Tarefas</span>
+            {!tasksOpen && pendingCount > 0 && (
+              <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-primary text-background text-xs font-bold">{pendingCount}</span>
+            )}
+          </div>
+          <div className="flex items-center gap-2">
+            {tasksOpen && <span className="text-xs text-muted-foreground">{pendingCount} pendentes</span>}
+            {tasksOpen ? <ChevronUp className="w-4 h-4 text-muted-foreground" /> : <ChevronDown className="w-4 h-4 text-muted-foreground" />}
+          </div>
+        </button>
+        {tasksOpen && (
+          <div className="px-4 pb-4 border-t border-surface-mid pt-3 space-y-2">
+            {tasks.map(task => (
+              <div key={task.id} className={"flex items-center gap-3 p-3 rounded-2xl " + (tasksDone.includes(task.id) ? "opacity-50" : "hover:bg-surface-mid")}>
+                <Checkbox
+                  checked={tasksDone.includes(task.id)}
+                  onCheckedChange={() => toggleTask(task.id)}
+                  className="rounded-lg border-surface-high data-[state=checked]:bg-primary data-[state=checked]:border-primary"
+                />
+                <span className={"text-sm flex-1 text-foreground " + (tasksDone.includes(task.id) ? "line-through" : "")}>{task.label}</span>
+                <Badge className={"text-xs flex-shrink-0 " + (task.priority === "Alta" ? "bg-red-500/20 text-red-400" : "bg-yellow-500/20 text-yellow-400")}>{task.priority}</Badge>
               </div>
             ))}
           </div>
-        </div>
+        )}
+      </div>
 
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-          {statCards.map((card) => {
-            const Icon = card.icon;
-            return (
-              <div key={card.title} onClick={() => navigate(card.url)} className="cursor-pointer bg-surface-low rounded-3xl p-5 hover:bg-surface-mid transition-all group">
-                <div className="p-2.5 rounded-2xl bg-surface-mid group-hover:bg-surface-high w-fit mb-4 transition-colors">
-                  <Icon className={`w-5 h-5 ${card.color}`} />
-                </div>
-                <p className="text-xs text-muted-foreground mb-1">{card.title}</p>
-                <p className="text-2xl font-bold text-primary">{card.value}</p>
+      {/* Stat Cards */}
+      <div className="grid grid-cols-2 gap-3">
+        {statCards.map(card => {
+          const Icon = card.icon;
+          return (
+            <button key={card.label} onClick={() => navigate(card.route)} className="bg-surface-low rounded-3xl p-4 border border-surface-mid hover:bg-surface-mid active:scale-95 transition-all text-left">
+              <div className={"w-9 h-9 rounded-2xl " + card.bg + " flex items-center justify-center mb-3"}>
+                <Icon className={"w-5 h-5 " + card.color} />
               </div>
-            );
-          })}
-        </div>
+              <p className="text-2xl font-bold text-foreground">{card.value}</p>
+              <p className="text-xs text-muted-foreground mt-1">{card.label}</p>
+            </button>
+          );
+        })}
+      </div>
 
-        <div className="space-y-4">
-          <h2 className="text-lg font-semibold text-foreground font-sans">Produtos em Andamento</h2>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            {mockProducts.map((p) => (
-              <div key={p.id} className="bg-surface-low rounded-3xl p-5 hover:bg-surface-mid transition-all">
-                <div className="flex items-start justify-between mb-3">
-                  <div>
-                    <h3 className="font-semibold text-foreground text-sm">{p.name}</h3>
-                    <p className="text-xs text-muted-foreground">{p.type}</p>
-                  </div>
-                  <Badge className={`text-xs ${p.status === "ativo" ? "bg-green-500/20 text-green-400" : "bg-primary/20 text-primary"}`}>{p.status}</Badge>
-                </div>
-                <div className="flex items-center justify-between mb-1.5">
-                  <span className="text-xs text-muted-foreground">Progresso</span>
-                  <span className="text-xs font-medium text-primary">{p.progress}%</span>
-                </div>
-                <div className="w-full h-1.5 bg-surface-high rounded-full overflow-hidden">
-                  <div className="h-full bg-primary rounded-full transition-all" style={{ width: `${p.progress}%` }} />
+      {/* Recent Products */}
+      <div className="bg-surface-low rounded-3xl p-4 border border-surface-mid">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="font-semibold text-foreground">Produtos Recentes</h2>
+          <button onClick={() => navigate("/products")} className="text-xs text-primary hover:underline">Ver todos</button>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          {[
+            { name: "App Delivery", type: "Mobile App", progress: 75 },
+            { name: "Salsa Store", type: "E-commerce", progress: 100 },
+            { name: "Landing Page Pro", type: "Web", progress: 60 },
+            { name: "Curso Marketing", type: "Infoproduto", progress: 40 },
+          ].map(p => (
+            <button key={p.name} onClick={() => navigate("/products")} className="flex items-center gap-3 p-3 rounded-2xl hover:bg-surface-mid active:scale-95 transition-all text-left">
+              <div className="w-9 h-9 rounded-2xl bg-primary/10 flex items-center justify-center flex-shrink-0">
+                <Package className="w-4 h-4 text-primary" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium text-foreground truncate">{p.name}</p>
+                <p className="text-xs text-muted-foreground">{p.type}</p>
+                <div className="w-full h-1 bg-surface-mid rounded-full mt-1.5 overflow-hidden">
+                  <div className="h-full bg-primary rounded-full" style={{ width: p.progress + "%" }} />
                 </div>
               </div>
-            ))}
-          </div>
+              <span className="text-xs font-medium text-primary flex-shrink-0">{p.progress}%</span>
+            </button>
+          ))}
         </div>
       </div>
     </div>
