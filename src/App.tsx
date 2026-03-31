@@ -17,20 +17,26 @@ import Notifications from "./pages/Notifications";
 import Profile from "./pages/Profile";
 import Team from "./pages/Team";
 import Auth from "./pages/Auth";
+import AdminPanel from "./pages/AdminPanel";
 import NotFound from "./pages/NotFound";
+
 const queryClient = new QueryClient();
+
 const App = () => {
   const [loading, setLoading] = useState(true);
+
   return (
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
-        <Toaster /><Sonner />
+        <Toaster />
+        <Sonner />
         {loading ? (
           <LoadingPage onDone={() => setLoading(false)} />
         ) : (
           <BrowserRouter>
             <Routes>
               <Route path="/auth" element={<Auth />} />
+              <Route path="/admin" element={<AdminPanel />} />
               <Route element={<AppLayout />}>
                 <Route path="/" element={<Index />} />
                 <Route path="/products" element={<Products />} />
@@ -38,10 +44,10 @@ const App = () => {
                 <Route path="/marketing" element={<Marketing />} />
                 <Route path="/calendar" element={<Calendar />} />
                 <Route path="/contacts" element={<Contacts />} />
-                <Route path="/team" element={<Team />} />
                 <Route path="/chat" element={<Chat />} />
                 <Route path="/notifications" element={<Notifications />} />
                 <Route path="/profile" element={<Profile />} />
+                <Route path="/team" element={<Team />} />
               </Route>
               <Route path="*" element={<NotFound />} />
             </Routes>
@@ -51,4 +57,5 @@ const App = () => {
     </QueryClientProvider>
   );
 };
+
 export default App;
