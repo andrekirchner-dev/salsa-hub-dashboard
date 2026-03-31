@@ -1,84 +1,52 @@
 import {
-  LayoutDashboard, Package, Megaphone, CalendarDays,
-  Users, MessageCircle, Bell, User, ChevronLeft,
-} from "lucide-react";
-import { NavLink } from "@/components/NavLink";
-import { useLocation } from "react-router-dom";
-import {
-  Sidebar, SidebarContent, SidebarGroup, SidebarGroupContent,
-  SidebarMenu, SidebarMenuButton, SidebarMenuItem, SidebarFooter, useSidebar,
+  Sidebar, SidebarContent, SidebarFooter, SidebarHeader, useSidebar,
 } from "@/components/ui/sidebar";
+import { Button } from "@/components/ui/button";
+import { LayoutDashboard, Package, Megaphone, CalendarDays, Users, MessageCircle, User, ChevronLeft } from "lucide-react";
+import { Link } from "react-router-dom";
 
-const mainItems = [
+const navItems = [
   { title: "Dashboard", url: "/", icon: LayoutDashboard },
+  { title: "Chat", url: "/chat", icon: MessageCircle },
   { title: "Produtos", url: "/products", icon: Package },
   { title: "Marketing", url: "/marketing", icon: Megaphone },
   { title: "Calendário", url: "/calendar", icon: CalendarDays },
-  { title: "Equipe", url: "/contacts", icon: Users },
-  { title: "Chat", url: "/chat", icon: MessageCircle },
-  { title: "Notificações", url: "/notifications", icon: Bell },
+  { title: "Equipe", url: "/team", icon: Users },
 ];
 
 export function AppSidebar() {
   const { state, toggleSidebar } = useSidebar();
-  const collapsed = state === "collapsed";
-  const location = useLocation();
-
   return (
-    <Sidebar collapsible="icon" className="border-r-0">
-      <div className="flex items-center gap-3 px-4 py-5">
-        <img src="/parsley.png" alt="Salsa Hub" className="w-8 h-8" />
-        {!collapsed && (
-          <span className="text-lg font-bold tracking-tight text-foreground">
-            Salsa Hub
-          </span>
-        )}
-        {!collapsed && (
-          <button onClick={toggleSidebar} className="ml-auto text-muted-foreground hover:text-foreground transition-colors">
+    <Sidebar className="bg-surface-low border-r border-surface-mid">
+      <SidebarHeader className="border-b border-surface-mid">
+        <div className="flex items-center justify-between px-2 py-4">
+          <Link to="/" className="flex items-center gap-2 font-sans font-bold text-lg text-primary hover:opacity-80">
+            <img src="/parsley.png" alt="SalsaHub" className="w-6 h-6" />
+            {state === "expanded" && "SalsaHub"}
+          </Link>
+          <Button variant="ghost" size="icon" onClick={toggleSidebar} className="h-8 w-8">
             <ChevronLeft className="w-4 h-4" />
-          </button>
-        )}
-      </div>
-
-      <SidebarContent className="px-2">
-        <SidebarGroup>
-          <SidebarGroupContent>
-            <SidebarMenu>
-              {mainItems.map((item) => (
-                <SidebarMenuItem key={item.title}>
-                  <SidebarMenuButton asChild className="rounded-xl h-10">
-                    <NavLink
-                      to={item.url}
-                      end={item.url === "/"}
-                      className="hover:bg-surface-mid transition-colors"
-                      activeClassName="bg-primary/10 text-primary font-semibold"
-                    >
-                      <item.icon className="w-5 h-5 shrink-0" />
-                      {!collapsed && <span className="ml-3">{item.title}</span>}
-                    </NavLink>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              ))}
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
+          </Button>
+        </div>
+      </SidebarHeader>
+      <SidebarContent>
+        <nav className="space-y-2 px-2">
+          {navItems.map((item) => {
+            const Icon = item.icon;
+            return (
+              <Link key={item.url} to={item.url} className="flex items-center gap-3 px-4 py-2.5 rounded-xl text-muted-foreground hover:bg-surface-mid hover:text-foreground transition-colors">
+                <Icon className="w-5 h-5 flex-shrink-0" />
+                {state === "expanded" && <span className="text-sm font-medium">{item.title}</span>}
+              </Link>
+            );
+          })}
+        </nav>
       </SidebarContent>
-
-      <SidebarFooter className="px-2 pb-4">
-        <SidebarMenu>
-          <SidebarMenuItem>
-            <SidebarMenuButton asChild className="rounded-xl h-10">
-              <NavLink
-                to="/profile"
-                className="hover:bg-surface-mid transition-colors"
-                activeClassName="bg-primary/10 text-primary font-semibold"
-              >
-                <User className="w-5 h-5 shrink-0" />
-                {!collapsed && <span className="ml-3">Perfil</span>}
-              </NavLink>
-            </SidebarMenuButton>
-          </SidebarMenuItem>
-        </SidebarMenu>
+      <SidebarFooter className="border-t border-surface-mid">
+        <Link to="/profile" className="flex items-center gap-3 px-4 py-2.5 rounded-xl text-muted-foreground hover:bg-surface-mid hover:text-foreground transition-colors">
+          <User className="w-5 h-5 flex-shrink-0" />
+          {state === "expanded" && <span className="text-sm font-medium">Perfil</span>}
+        </Link>
       </SidebarFooter>
     </Sidebar>
   );
