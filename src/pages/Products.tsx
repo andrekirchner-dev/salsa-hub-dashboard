@@ -1,10 +1,10 @@
 import { useState } from "react";
-import { Package, Plus, Search, Filter } from "lucide-react";
+import { Package, Plus, Search, ArrowLeft } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -22,152 +22,150 @@ interface Product {
 }
 
 const initialProducts: Product[] = [
-  { id: "1", name: "App Salsa Delivery", type: "App / SaaS", progress: 72, status: "Em desenvolvimento", team: ["Ana", "Carlos"] },
-  { id: "2", name: "Curso Marketing Digital", type: "Infoproduto", progress: 45, status: "Em desenvolvimento", team: ["Maria"] },
-  { id: "3", name: "Loja Salsa Store", type: "E-commerce", progress: 90, status: "Lançado", team: ["João", "Ana"] },
-  { id: "4", name: "Landing Salsa Pro", type: "Landing Page", progress: 100, status: "Lançado", team: ["Carlos"] },
-  { id: "5", name: "App Gestão Interna", type: "App / SaaS", progress: 20, status: "Em desenvolvimento", team: ["Pedro", "Maria"] },
-  { id: "6", name: "Ebook Vendas Online", type: "Infoproduto", progress: 0, status: "Pausado", team: ["João"] },
+  { id: "1", name: "App Salsa Delivery", type: "App / SaaS", progress: 72, status: "Em desenvolvimento", team: ["A", "M", "C"] },
+  { id: "2", name: "Loja Salsa Store", type: "E-commerce", progress: 100, status: "Lançado", team: ["M", "J"] },
+  { id: "3", name: "Curso Marketing Digital", type: "Infoproduto", progress: 45, status: "Em desenvolvimento", team: ["A", "P"] },
+  { id: "4", name: "Landing Salsa Pro", type: "Landing Page", progress: 88, status: "Em desenvolvimento", team: ["C"] },
+  { id: "5", name: "SaaS Analytics", type: "App / SaaS", progress: 20, status: "Pausado", team: ["A", "M"] },
 ];
 
+const getStatusColor = (status: string) => {
+  if (status === "Lançado") return "bg-green-500/20 text-green-400";
+  if (status === "Pausado") return "bg-gray-500/20 text-gray-400";
+  return "bg-yellow-500/20 text-yellow-400";
+};
+
 export default function Products() {
+  const navigate = useNavigate();
+  const [products] = useState<Product[]>(initialProducts);
   const [search, setSearch] = useState("");
   const [typeFilter, setTypeFilter] = useState("Todos");
   const [statusFilter, setStatusFilter] = useState("Todos");
-  const [products, setProducts] = useState(initialProducts);
-  const [newProduct, setNewProduct] = useState({ name: "", type: "App / SaaS" });
-  const [dialogOpen, setDialogOpen] = useState(false);
+  const [addOpen, setAddOpen] = useState(false);
 
-  const filtered = products.filter((p) => {
+  const filtered = products.filter(p => {
     const matchSearch = p.name.toLowerCase().includes(search.toLowerCase());
     const matchType = typeFilter === "Todos" || p.type === typeFilter;
     const matchStatus = statusFilter === "Todos" || p.status === statusFilter;
     return matchSearch && matchType && matchStatus;
   });
 
-  const addProduct = () => {
-    if (!newProduct.name) return;
-    setProducts([...products, {
-      id: String(Date.now()),
-      name: newProduct.name,
-      type: newProduct.type,
-      progress: 0,
-      status: "Em desenvolvimento",
-      team: [],
-    }]);
-    setNewProduct({ name: "", type: "App / SaaS" });
-    setDialogOpen(false);
-  };
-
-  const statusColor = (s: string) => {
-    if (s === "Lançado") return "bg-primary/10 text-primary";
-    if (s === "Pausado") return "bg-destructive/10 text-destructive";
-    return "bg-warning/10 text-warning";
-  };
-
   return (
-    <div className="max-w-6xl mx-auto space-y-6 py-4">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <h1 className="text-2xl font-bold">Produtos</h1>
-        <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-          <DialogTrigger asChild>
-            <Button className="rounded-full gap-2">
-              <Plus className="w-4 h-4" /> Novo Produto
-            </Button>
-          </DialogTrigger>
-          <DialogContent className="bg-surface-mid border-0 rounded-3xl">
-            <DialogHeader>
-              <DialogTitle>Adicionar Produto</DialogTitle>
-            </DialogHeader>
-            <div className="space-y-4 pt-2">
-              <div>
-                <Label>Nome do Produto</Label>
-                <Input
-                  value={newProduct.name}
-                  onChange={(e) => setNewProduct({ ...newProduct, name: e.target.value })}
-                  className="bg-surface-low border-0 rounded-xl mt-1"
-                  placeholder="Ex: App Salsa..."
-                />
+    <div className="min-h-screen bg-background">
+      <div className="p-4 md:p-8 max-w-5xl mx-auto">
+        {/* Header */}
+        <div className="flex items-center justify-between mb-6">
+          <h1 className="text-2xl font-bold text-foreground font-sans">Produtos</h1>
+          <Dialog open={addOpen} onOpenChange={setAddOpen}>
+            <DialogTrigger asChild>
+              <Button className="rounded-2xl bg-primary hover:bg-primary/80 text-background">
+                <Plus className="w-4 h-4 mr-2" />
+                Novo Produto
+              </Button>
+            </DialogTrigger>
+            <DialogContent className="bg-surface-low border-surface-mid">
+              <DialogHeader>
+                <DialogTitle>Novo Produto</DialogTitle>
+              </DialogHeader>
+              <div className="space-y-4">
+                <div>
+                  <Label className="text-sm text-muted-foreground mb-2 block">Nome do Produto</Label>
+                  <Input placeholder="ex: App Delivery" className="bg-surface-mid border-0 rounded-xl text-sm" />
+                </div>
+                <div>
+                  <Label className="text-sm text-muted-foreground mb-2 block">Tipo</Label>
+                  <Select>
+                    <SelectTrigger className="bg-surface-mid border-0 rounded-xl text-sm">
+                      <SelectValue placeholder="Selecione o tipo" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {productTypes.slice(1).map(t => <SelectItem key={t} value={t}>{t}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <Button className="w-full rounded-xl bg-primary hover:bg-primary/80" onClick={() => setAddOpen(false)}>
+                  Criar Produto
+                </Button>
               </div>
-              <div>
-                <Label>Tipo</Label>
-                <Select value={newProduct.type} onValueChange={(v) => setNewProduct({ ...newProduct, type: v })}>
-                  <SelectTrigger className="bg-surface-low border-0 rounded-xl mt-1">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent className="bg-surface-high border-0 rounded-xl">
-                    {productTypes.filter(t => t !== "Todos").map(t => (
-                      <SelectItem key={t} value={t}>{t}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <Button onClick={addProduct} className="w-full rounded-full">Criar Produto</Button>
-            </div>
-          </DialogContent>
-        </Dialog>
-      </div>
+            </DialogContent>
+          </Dialog>
+        </div>
 
-      {/* Filters */}
-      <div className="flex flex-col sm:flex-row gap-3">
-        <div className="relative flex-1">
+        {/* Search */}
+        <div className="relative mb-4">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
           <Input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
             placeholder="Buscar produtos..."
-            className="pl-9 bg-surface-low border-0 rounded-xl"
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            className="pl-10 bg-surface-low border border-surface-mid rounded-2xl text-sm"
           />
         </div>
-        <div className="flex gap-2 flex-wrap">
-          {productTypes.map(t => (
+
+        {/* Filters */}
+        <div className="flex gap-2 mb-6 overflow-x-auto pb-1 -mx-4 px-4 md:mx-0 md:px-0">
+          <div className="flex gap-2">
+            {statusTypes.map(s => (
+              <button
+                key={s}
+                onClick={() => setStatusFilter(s)}
+                className={`px-3 py-1.5 rounded-2xl text-xs font-medium whitespace-nowrap transition-colors ${
+                  statusFilter === s
+                    ? "bg-primary text-background"
+                    : "bg-surface-mid text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                {s}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Product Grid */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          {filtered.map(product => (
             <button
-              key={t}
-              onClick={() => setTypeFilter(t)}
-              className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${
-                typeFilter === t ? "bg-primary text-primary-foreground" : "bg-surface-low text-muted-foreground hover:text-foreground"
-              }`}
+              key={product.id}
+              onClick={() => navigate(`/products/${product.id}`)}
+              className="bg-surface-low rounded-3xl p-5 border border-surface-mid hover:bg-surface-mid active:scale-[0.98] transition-all text-left"
             >
-              {t}
+              <div className="flex items-start justify-between mb-4">
+                <div className="w-10 h-10 rounded-2xl bg-primary/15 flex items-center justify-center">
+                  <Package className="w-5 h-5 text-primary" />
+                </div>
+                <Badge className={`text-xs ${getStatusColor(product.status)}`}>
+                  {product.status}
+                </Badge>
+              </div>
+
+              <h3 className="font-semibold text-foreground mb-1">{product.name}</h3>
+              <p className="text-xs text-muted-foreground mb-3">{product.type}</p>
+
+              <div className="mb-3">
+                <div className="flex justify-between items-center mb-1">
+                  <span className="text-xs text-muted-foreground">Progresso</span>
+                  <span className="text-xs font-medium text-primary">{product.progress}%</span>
+                </div>
+                <Progress value={product.progress} className="h-1.5 bg-surface-mid" />
+              </div>
+
+              <div className="flex items-center gap-1">
+                {product.team.map((member, i) => (
+                  <div key={i} className="w-6 h-6 rounded-full bg-primary/20 text-primary flex items-center justify-center text-[10px] font-bold border border-background">
+                    {member}
+                  </div>
+                ))}
+              </div>
             </button>
           ))}
         </div>
-      </div>
 
-      {/* Products Grid */}
-      <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
-        {filtered.map((p) => (
-          <Link key={p.id} to={`/products/${p.id}`} className="block">
-            <div className="bg-surface-low rounded-3xl p-6 hover:bg-surface-mid transition-colors space-y-4 h-full">
-              <div className="flex items-start justify-between">
-                <div className="w-10 h-10 rounded-xl bg-surface-mid flex items-center justify-center">
-                  <Package className="w-5 h-5 text-primary" />
-                </div>
-                <span className={`text-xs px-3 py-1 rounded-full ${statusColor(p.status)}`}>{p.status}</span>
-              </div>
-              <div>
-                <h3 className="font-semibold text-lg">{p.name}</h3>
-                <p className="text-xs text-muted-foreground mt-1">{p.type}</p>
-              </div>
-              <div className="space-y-2">
-                <div className="flex justify-between text-xs text-muted-foreground">
-                  <span>Progresso</span>
-                  <span>{p.progress}%</span>
-                </div>
-                <Progress value={p.progress} className="h-1.5 bg-surface-mid" />
-              </div>
-              {p.team.length > 0 && (
-                <div className="flex gap-1">
-                  {p.team.map(m => (
-                    <span key={m} className="w-7 h-7 rounded-full bg-surface-high flex items-center justify-center text-xs font-medium">
-                      {m[0]}
-                    </span>
-                  ))}
-                </div>
-              )}
-            </div>
-          </Link>
-        ))}
+        {filtered.length === 0 && (
+          <div className="text-center py-16 text-muted-foreground">
+            <Package className="w-12 h-12 mx-auto mb-3 opacity-30" />
+            <p className="text-sm">Nenhum produto encontrado</p>
+          </div>
+        )}
       </div>
     </div>
   );
