@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { ArrowLeft, Upload, Plus, Trash2, Download, Search, FileText, Image, File } from "lucide-react";
+import { ArrowLeft, Upload, Plus, Trash2, Download, FileText, Image, File } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -10,7 +10,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 interface ActivityItem { id: number; action: string; user: string; timestamp: string; }
 interface TeamMember { id: number; name: string; role: string; avatar: string; }
-interface TaskCard { id: number; emoji: string; title: string; points: number; status: "COMPLETA" | "ATIVA" | "BLOQUEADA" | "MILESTONE"; }
+interface TaskCard { id: number; title: string; status: "COMPLETA" | "ATIVA" | "BLOQUEADA" | "MILESTONE"; }
 interface FileItem { id: number; name: string; size: string; date: string; type: string; icon: string; }
 
 const mockActivity: ActivityItem[] = [
@@ -27,21 +27,21 @@ const mockTeam: TeamMember[] = [
 ];
 
 const mockTasks: TaskCard[] = [
-  { id: 1, emoji: "🔍", title: "Definição de Mercado", points: 100, status: "COMPLETA" },
-  { id: 2, emoji: "📈", title: "Tendências de Comportamento", points: 150, status: "COMPLETA" },
-  { id: 3, emoji: "📝", title: "Tendências de Conteúdo", points: 120, status: "COMPLETA" },
-  { id: 4, emoji: "🔎", title: "Análise de Concorrente", points: 200, status: "COMPLETA" },
-  { id: 5, emoji: "📊", title: "Tendências de Marketing", points: 180, status: "COMPLETA" },
-  { id: 6, emoji: "🧪", title: "Mecanismo e Tese de Marketing", points: 150, status: "COMPLETA" },
-  { id: 7, emoji: "👥", title: "Definição Demográfica", points: 120, status: "COMPLETA" },
-  { id: 8, emoji: "💰", title: "Precificação", points: 140, status: "COMPLETA" },
-  { id: 9, emoji: "🔥", title: "Oferta No Brainer", points: 180, status: "COMPLETA" },
-  { id: 10, emoji: "⚡", title: "Estrutura de Caixa Automático", points: 200, status: "ATIVA" },
-  { id: 11, emoji: "📢", title: "Criando seus Anúncios", points: 150, status: "BLOQUEADA" },
-  { id: 12, emoji: "🚀", title: "Ativando seus Ads", points: 300, status: "BLOQUEADA" },
-  { id: 13, emoji: "🔧", title: "Otimizações e Ajustes", points: 0, status: "BLOQUEADA" },
-  { id: 14, emoji: "✅", title: "Validação de Oferta", points: 0, status: "BLOQUEADA" },
-  { id: 15, emoji: "🏆", title: "Operação 100k", points: 0, status: "MILESTONE" },
+  { id: 1, title: "Definição de Mercado", status: "COMPLETA" },
+  { id: 2, title: "Tendências de Comportamento", status: "COMPLETA" },
+  { id: 3, title: "Tendências de Conteúdo", status: "COMPLETA" },
+  { id: 4, title: "Análise de Concorrente", status: "COMPLETA" },
+  { id: 5, title: "Tendências de Marketing", status: "COMPLETA" },
+  { id: 6, title: "Mecanismo e Tese de Marketing", status: "COMPLETA" },
+  { id: 7, title: "Definição Demográfica", status: "COMPLETA" },
+  { id: 8, title: "Precificação", status: "COMPLETA" },
+  { id: 9, title: "Oferta No Brainer", status: "COMPLETA" },
+  { id: 10, title: "Estrutura de Caixa Automático", status: "ATIVA" },
+  { id: 11, title: "Criando seus Anúncios", status: "BLOQUEADA" },
+  { id: 12, title: "Ativando seus Ads", status: "BLOQUEADA" },
+  { id: 13, title: "Otimizações e Ajustes", status: "BLOQUEADA" },
+  { id: 14, title: "Validação de Oferta", status: "BLOQUEADA" },
+  { id: 15, title: "Operação 100k", status: "MILESTONE" },
 ];
 
 const mockFiles: FileItem[] = [
@@ -51,14 +51,14 @@ const mockFiles: FileItem[] = [
 ];
 
 const tabItems = [
-  { value: "overview", label: "Visão Geral", emoji: "📋" },
-  { value: "tasks", label: "Tarefas", emoji: "✅" },
-  { value: "files", label: "Arquivos", emoji: "📁" },
-  { value: "docs", label: "Documentos", emoji: "📄" },
-  { value: "identity", label: "Identidade", emoji: "🎨" },
-  { value: "research", label: "Pesquisa", emoji: "🔍" },
-  { value: "team", label: "Equipe", emoji: "👥" },
-  { value: "settings", label: "Config.", emoji: "⚙️" },
+  { value: "tasks", label: "Tarefas" },
+  { value: "files", label: "Arquivos" },
+  { value: "docs", label: "Documentos" },
+  { value: "identity", label: "Identidade" },
+  { value: "research", label: "Pesquisa" },
+  { value: "team", label: "Equipe" },
+  { value: "activity", label: "Atividade" },
+  { value: "settings", label: "Config." },
 ];
 
 const getTaskStyle = (status: TaskCard["status"]) => {
@@ -72,12 +72,11 @@ const getTaskStyle = (status: TaskCard["status"]) => {
 export default function ProductDetail() {
   const navigate = useNavigate();
   const [description, setDescription] = useState("Plataforma de delivery que conecta restaurantes e clientes com rastreamento em tempo real.");
-  const totalPts = mockTasks.reduce((s, t) => s + t.points, 0);
-  const donePts = mockTasks.filter(t => t.status === "COMPLETA").reduce((s, t) => s + t.points, 0);
 
   return (
     <div className="min-h-screen bg-background">
       <div className="p-4 md:p-8 max-w-5xl mx-auto">
+
         {/* Header */}
         <div className="flex items-center gap-3 mb-6">
           <button onClick={() => navigate("/products")} className="p-2 rounded-xl hover:bg-surface-mid transition-colors flex-shrink-0">
@@ -90,7 +89,7 @@ export default function ProductDetail() {
         </div>
 
         {/* Progress banner */}
-        <div className="bg-surface-low rounded-3xl p-5 border border-surface-mid mb-6">
+        <div className="bg-surface-low rounded-3xl p-5 border border-surface-mid mb-4">
           <div className="flex items-center justify-between mb-3">
             <div className="flex gap-2 flex-wrap">
               <Badge className="bg-blue-500/20 text-blue-400 text-xs">Mobile App</Badge>
@@ -117,71 +116,50 @@ export default function ProductDetail() {
           </div>
         </div>
 
-        {/* Tab grid */}
-        <Tabs defaultValue="overview" className="w-full">
+        {/* Description — always visible above tabs */}
+        <div className="bg-surface-low rounded-3xl p-5 border border-surface-mid mb-6">
+          <h3 className="font-semibold text-foreground mb-3">Descrição</h3>
+          <Textarea
+            value={description}
+            onChange={e => setDescription(e.target.value)}
+            className="bg-surface-mid border-0 rounded-2xl min-h-20 text-sm"
+          />
+        </div>
+
+        {/* Tab grid — 4 columns, no emojis, no scroll */}
+        <Tabs defaultValue="tasks" className="w-full">
           <TabsList asChild>
             <div className="grid grid-cols-4 gap-2 mb-6">
               {tabItems.map(tab => (
                 <TabsTrigger
                   key={tab.value}
                   value={tab.value}
-                  className="flex flex-col items-center gap-1 py-3 px-2 bg-surface-low border border-surface-mid rounded-2xl text-xs font-medium text-muted-foreground data-[state=active]:bg-primary data-[state=active]:text-background data-[state=active]:border-primary transition-all"
+                  className="py-3 px-2 bg-surface-low border border-surface-mid rounded-2xl text-xs font-medium text-muted-foreground data-[state=active]:bg-primary data-[state=active]:text-background data-[state=active]:border-primary transition-all"
                 >
-                  <span className="text-base leading-none">{tab.emoji}</span>
-                  <span className="leading-none">{tab.label}</span>
+                  {tab.label}
                 </TabsTrigger>
               ))}
             </div>
           </TabsList>
 
-          <TabsContent value="overview" className="space-y-4">
-            <div className="bg-surface-low rounded-3xl p-5 border border-surface-mid">
-              <h3 className="font-semibold text-foreground mb-3">Descrição</h3>
-              <Textarea value={description} onChange={e => setDescription(e.target.value)} className="bg-surface-mid border-0 rounded-2xl min-h-24 text-sm" />
-            </div>
-            <div className="bg-surface-low rounded-3xl p-5 border border-surface-mid">
-              <h3 className="font-semibold text-foreground mb-3">Atividade Recente</h3>
-              <div className="space-y-3">
-                {mockActivity.map(item => (
-                  <div key={item.id} className="flex items-start gap-3 pb-3 border-b border-surface-mid last:border-0">
-                    <div className="w-2 h-2 rounded-full bg-primary mt-2 flex-shrink-0" />
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm text-foreground">{item.action}</p>
-                      <p className="text-xs text-muted-foreground">{item.user} · {item.timestamp}</p>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </TabsContent>
-
+          {/* Tasks — no point scores */}
           <TabsContent value="tasks" className="space-y-4">
-            <div className="flex items-center justify-between">
-              <p className="text-sm text-muted-foreground">
-                Pontos: <span className="text-primary font-bold">{donePts}</span>
-                <span className="text-muted-foreground">/{totalPts}</span>
-              </p>
-              <div className="w-24 h-1.5 bg-surface-mid rounded-full overflow-hidden">
-                <div className="h-full bg-primary" style={{ width: `${(donePts / totalPts) * 100}%` }} />
-              </div>
-            </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
               {mockTasks.map(task => {
                 const s = getTaskStyle(task.status);
                 return (
                   <div key={task.id} className={"bg-surface-low rounded-2xl p-4 hover:bg-surface-mid transition-colors " + s.border}>
-                    <div className="flex items-start justify-between mb-2">
-                      <span className="text-xl">{task.emoji}</span>
-                      <Badge className={"text-[10px] px-1.5 py-0.5 " + s.badge}>{s.label}</Badge>
+                    <div className="flex items-start justify-between gap-2">
+                      <p className="font-semibold text-foreground text-sm">{task.title}</p>
+                      <Badge className={"text-[10px] px-1.5 py-0.5 flex-shrink-0 " + s.badge}>{s.label}</Badge>
                     </div>
-                    <p className="font-semibold text-foreground text-sm mb-1">{task.title}</p>
-                    {task.points > 0 && <p className="text-xs text-primary font-medium">+{task.points} PTS</p>}
                   </div>
                 );
               })}
             </div>
           </TabsContent>
 
+          {/* Files */}
           <TabsContent value="files" className="space-y-4">
             <div className="bg-surface-low rounded-3xl p-10 border-2 border-dashed border-surface-mid text-center hover:border-primary/50 transition-colors cursor-pointer">
               <Upload className="w-8 h-8 text-muted-foreground mx-auto mb-2" />
@@ -209,6 +187,7 @@ export default function ProductDetail() {
             </div>
           </TabsContent>
 
+          {/* Documents */}
           <TabsContent value="docs" className="space-y-4">
             <div className="bg-surface-low rounded-3xl p-5 border border-surface-mid">
               <div className="flex items-center justify-between mb-4">
@@ -228,6 +207,7 @@ export default function ProductDetail() {
             </div>
           </TabsContent>
 
+          {/* Identity */}
           <TabsContent value="identity" className="space-y-4">
             <div className="bg-surface-low rounded-3xl p-5 border border-surface-mid">
               <h3 className="font-semibold text-foreground mb-3">Logo</h3>
@@ -263,6 +243,7 @@ export default function ProductDetail() {
             </div>
           </TabsContent>
 
+          {/* Research */}
           <TabsContent value="research" className="space-y-4">
             <div className="bg-surface-low rounded-3xl p-5 border border-surface-mid">
               <div className="flex flex-wrap gap-2 mb-4">
@@ -278,6 +259,7 @@ export default function ProductDetail() {
             </div>
           </TabsContent>
 
+          {/* Team */}
           <TabsContent value="team" className="space-y-4">
             <div className="bg-surface-low rounded-3xl p-5 border border-surface-mid">
               <div className="flex items-center justify-between mb-4">
@@ -310,6 +292,25 @@ export default function ProductDetail() {
             </div>
           </TabsContent>
 
+          {/* Activity */}
+          <TabsContent value="activity" className="space-y-4">
+            <div className="bg-surface-low rounded-3xl p-5 border border-surface-mid">
+              <h3 className="font-semibold text-foreground mb-3">Atividade Recente</h3>
+              <div className="space-y-3">
+                {mockActivity.map(item => (
+                  <div key={item.id} className="flex items-start gap-3 pb-3 border-b border-surface-mid last:border-0">
+                    <div className="w-2 h-2 rounded-full bg-primary mt-2 flex-shrink-0" />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm text-foreground">{item.action}</p>
+                      <p className="text-xs text-muted-foreground">{item.user} · {item.timestamp}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </TabsContent>
+
+          {/* Settings */}
           <TabsContent value="settings" className="space-y-4">
             <div className="bg-surface-low rounded-3xl p-5 border border-surface-mid space-y-4">
               <h3 className="font-semibold text-foreground">Configurações do Projeto</h3>
