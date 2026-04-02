@@ -1,0 +1,159 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ── Helpers ──────────────────────────────────────────────────────────────
+
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    // Reads the caller's role from their profile document (cached by Firestore)
+    function userRole() {
+      return get(/databases/$(database)/documents/profiles/$(request.auth.uid)).data.role;
+    }
+
+    function isCLevel() {
+      return userRole() in ['CEO', 'CFO', 'CMO', 'COO', 'Diretor'];
+    }
+
+    function isManager() {
+      return userRole() in ['CEO', 'CFO', 'CMO', 'COO', 'Diretor', 'Gerente', 'Coordenador'];
+    }
+
+    function isLibraryAdmin() {
+      return userRole() in ['CEO', 'CFO', 'CMO', 'COO', 'Diretor', 'Coordenador'];
+    }
+
+    // ── profiles ─────────────────────────────────────────────────────────────
+    // All authenticated users can read profiles (needed for name display).
+    // Only the owner can create/update their own profile.
+    match /profiles/{userId} {
+      allow read:   if isAuthenticated();
+      allow create: if isAuthenticated() && request.auth.uid == userId;
+      allow update: if isAuthenticated() && request.auth.uid == userId;
+      allow delete: if false; // Profiles are never deleted via client
+    }
+
+    // ── cargoCodes ───────────────────────────────────────────────────────────
+    // Authenticated users can READ to validate a code on signup.
+    // Only C-Level can CREATE codes.
+    // Any authenticated user can UPDATE (to mark as used) — write is gated in client.
+    match /cargoCodes/{codeId} {
+      allow read:   if isAuthenticated();
+      allow create: if isAuthenticated() && isCLevel();
+      allow update: if isAuthenticated()
+        && request.resource.data.keys().hasOnly(['used', 'usedBy', 'usedAt'])
+        && request.resource.data.used == true;
+      allow delete: if isAuthenticated() && isCLevel();
+    }
+
+    // ── teams ─────────────────────────────────────────────────────────────────
+    match /teams/{teamId} {
+      allow read:   if isAuthenticated();
+      allow create: if isAuthenticated() && isCLevel();
+      allow update: if isAuthenticated() && isCLevel();
+      allow delete: if isAuthenticated() && isCLevel();
+
+      // ── teams/{teamId}/members (subcollection) ─────────────────────────────
+      match /members/{memberId} {
+        allow read:   if isAuthenticated();
+        allow create: if isAuthenticated() && isManager();
+        allow update: if isAuthenticated() && isManager();
+        allow delete: if isAuthenticated() && isManager();
+      }
+    }
+
+    // ── products ─────────────────────────────────────────────────────────────
+    match /products/{productId} {
+      allow read:   if isAuthenticated();
+      allow create: if isAuthenticated() && isManager();
+      allow update: if isAuthenticated() && isManager();
+      allow delete: if isAuthenticated() && isCLevel();
+    }
+
+    // ── productAccess ────────────────────────────────────────────────────────
+    // Users can read/create their own access records (cross-team join via code).
+    match /productAccess/{accessId} {
+      allow read:   if isAuthenticated()
+        && (resource == null || resource.data.userId == request.auth.uid);
+      allow create: if isAuthenticated()
+        && request.resource.data.userId == request.auth.uid;
+      allow delete: if isAuthenticated()
+        && resource.data.userId == request.auth.uid;
+      allow update: if false;
+    }
+
+    // ── tasks ─────────────────────────────────────────────────────────────────
+    match /tasks/{taskId} {
+      allow read:   if isAuthenticated();
+      allow create: if isAuthenticated();
+      allow update: if isAuthenticated()
+        && (
+          resource.data.assignedTo == request.auth.uid
+          || resource.data.createdBy == request.auth.uid
+          || isManager()
+        );
+      allow delete: if isAuthenticated() && isManager();
+    }
+
+    // ── taskComments ──────────────────────────────────────────────────────────
+    match /taskComments/{commentId} {
+      allow read:   if isAuthenticated();
+      allow create: if isAuthenticated()
+        && request.resource.data.userId == request.auth.uid;
+      allow update: if isAuthenticated()
+        && resource.data.userId == request.auth.uid;
+      allow delete: if isAuthenticated()
+        && resource.data.userId == request.auth.uid;
+    }
+
+    // ── productFiles ──────────────────────────────────────────────────────────
+    match /productFiles/{fileId} {
+      allow read:   if isAuthenticated();
+      allow create: if isAuthenticated();
+      allow delete: if isAuthenticated() && isManager();
+      allow update: if false;
+    }
+
+    // ── productActivity ───────────────────────────────────────────────────────
+    match /productActivity/{activityId} {
+      allow read:   if isAuthenticated();
+      allow create: if isAuthenticated();
+      allow update: if false;
+      allow delete: if false;
+    }
+
+    // ── toolsLibrary ──────────────────────────────────────────────────────────
+    match /toolsLibrary/{toolId} {
+      allow read:   if isAuthenticated();
+      allow create: if isAuthenticated() && isLibraryAdmin();
+      allow delete: if isAuthenticated() && isLibraryAdmin();
+      allow update: if isAuthenticated() && isLibraryAdmin();
+    }
+
+    // ── marketingCampaigns ────────────────────────────────────────────────────
+    match /marketingCampaigns/{campaignId} {
+      allow read:   if isAuthenticated();
+      allow create: if isAuthenticated() && isManager();
+      allow update: if isAuthenticated() && isManager();
+      allow delete: if isAuthenticated() && isCLevel();
+    }
+
+    // ── calendarEvents ────────────────────────────────────────────────────────
+    match /calendarEvents/{eventId} {
+      allow read:   if isAuthenticated();
+      allow create: if isAuthenticated();
+      allow update: if isAuthenticated()
+        && resource.data.createdBy == request.auth.uid;
+      allow delete: if isAuthenticated()
+        && resource.data.createdBy == request.auth.uid;
+    }
+
+    // ── Deny all other reads/writes ───────────────────────────────────────────
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
