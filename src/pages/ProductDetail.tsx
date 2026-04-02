@@ -1,457 +1,301 @@
-import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useState, useEffect, useCallback } from "react";
+import { useNavigate, useParams } from "react-router-dom";
 import {
-  ArrowLeft, ChevronDown, ChevronUp, Upload, Plus, Trash2, Download,
-  FileText, Image, File, CheckSquare, FolderOpen, BookOpen,
-  Palette, Search, Users, Activity, Settings, AlertTriangle
+  ArrowLeft, ChevronDown, ChevronUp, Plus, ExternalLink,
+  Copy, Check, Upload, FileText, Image, Users, Activity,
+  Settings, ListTodo, Loader2, Trash2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { Textarea } from "@/components/ui/textarea";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Label } from "@/components/ui/label";
+import { supabase } from "@/integrations/supabase/client";
 
-interface ActivityItem { id: number; action: string; user: string; timestamp: string; }
-interface TeamMember { id: number; name: string; role: string; avatar: string; }
-interface TaskCard { id: number; title: string; status: "COMPLETA" | "ATIVA" | "BLOQUEADA" | "MILESTONE"; }
-interface FileItem { id: number; name: string; size: string; date: string; type: string; icon: string; }
+interface Product {
+  id: string;
+  name: string;
+  description?: string;
+  status: string;
+  product_code?: string;
+  team_id?: string;
+}
 
-const mockActivity: ActivityItem[] = [
-  { id: 1, action: "Briefing atualizado", user: "André Pereira", timestamp: "há 2h" },
-  { id: 2, action: "Arquivo adicionado: Logo_v3.ai", user: "Mariana Silva", timestamp: "há 4h" },
-  { id: 3, action: "Status alterado para Em Desenvolvimento", user: "Carlos Mendes", timestamp: "ontem" },
-];
+interface Task {
+  id: string;
+  title: string;
+  status: string;
+  priority?: string;
+  assignee_name?: string;
+}
 
-const mockTeam: TeamMember[] = [
-  { id: 1, name: "André Pereira", role: "Gerente de Produto", avatar: "AP" },
-  { id: 2, name: "Mariana Silva", role: "Designer", avatar: "MS" },
-  { id: 3, name: "Carlos Mendes", role: "Desenvolvedor", avatar: "CM" },
-  { id: 4, name: "Ana Costa", role: "Marketing", avatar: "AC" },
-];
+interface ProductFile {
+  id: string;
+  name: string;
+  file_type: string;
+  file_url: string;
+  uploaded_at: string;
+}
 
-const mockTasks: TaskCard[] = [
-  { id: 1, title: "Definição de Mercado", status: "COMPLETA" },
-  { id: 2, title: "Tendências de Comportamento", status: "COMPLETA" },
-  { id: 3, title: "Tendências de Conteúdo", status: "COMPLETA" },
-  { id: 4, title: "Análise de Concorrente", status: "COMPLETA" },
-  { id: 5, title: "Tendências de Marketing", status: "COMPLETA" },
-  { id: 6, title: "Mecanismo e Tese de Marketing", status: "COMPLETA" },
-  { id: 7, title: "Definição Demográfica", status: "COMPLETA" },
-  { id: 8, title: "Precificação", status: "COMPLETA" },
-  { id: 9, title: "Oferta No Brainer", status: "COMPLETA" },
-  { id: 10, title: "Estrutura de Caixa Automático", status: "ATIVA" },
-  { id: 11, title: "Criando seus Anúncios", status: "BLOQUEADA" },
-  { id: 12, title: "Ativando seus Ads", status: "BLOQUEADA" },
-  { id: 13, title: "Otimizações e Ajustes", status: "BLOQUEADA" },
-  { id: 14, title: "Validação de Oferta", status: "BLOQUEADA" },
-  { id: 15, title: "Operação 100k", status: "MILESTONE" },
-];
+interface ActivityItem {
+  id: string;
+  action: string;
+  user_name?: string;
+  created_at: string;
+}
 
-const mockFiles: FileItem[] = [
-  { id: 1, name: "Briefing_v2.pdf", size: "2.4 MB", date: "Mar 28", type: "Briefing", icon: "pdf" },
-  { id: 2, name: "Design_System.ai", size: "15.2 MB", date: "Mar 25", type: "Design", icon: "img" },
-  { id: 3, name: "Contrato_Cliente.docx", size: "1.1 MB", date: "Mar 20", type: "Contrato", icon: "doc" },
-];
-
-const getTaskStyle = (status: TaskCard["status"]) => {
-  switch (status) {
-    case "COMPLETA": return { border: "border-l-4 border-green-500", badge: "bg-green-500/20 text-green-400", label: "COMPLETA" };
-    case "ATIVA":    return { border: "border-l-4 border-primary",    badge: "bg-primary/20 text-primary",      label: "ATIVA" };
-    case "BLOQUEADA":return { border: "border-l-4 border-gray-600",   badge: "bg-gray-500/20 text-gray-400",    label: "BLOQUEADA" };
-    case "MILESTONE":return { border: "border-l-4 border-amber-500",  badge: "bg-amber-500/20 text-amber-400",  label: "MILESTONE" };
-  }
-};
-// ─── Drawer Section Component ───────────────────────────────────────────────
 interface SectionProps {
   id: string;
   icon: React.ElementType;
   title: string;
-  badge?: string | number;
+  badge?: number;
   open: boolean;
   onToggle: (id: string) => void;
   children: React.ReactNode;
 }
 
+const STATUS_COLORS: Record<string, string> = {
+  PENDENTE: "bg-blue-500/20 text-blue-400 border-blue-500/30",
+  ATIVA: "bg-primary/20 text-primary border-primary/30",
+  EM_ANDAMENTO: "bg-yellow-500/20 text-yellow-400 border-yellow-500/30",
+  BLOQUEADA: "bg-red-500/20 text-red-400 border-red-500/30",
+  COMPLETA: "bg-green-500/20 text-green-400 border-green-500/30",
+};
+
 function DrawerSection({ id, icon: Icon, title, badge, open, onToggle, children }: SectionProps) {
   return (
     <div className="bg-surface-low rounded-3xl border border-surface-mid overflow-hidden mb-3">
-      <button
-        onClick={() => onToggle(id)}
-        className="w-full flex items-center justify-between px-5 py-4 hover:bg-surface-mid transition-colors"
-      >
+      <button onClick={() => onToggle(id)} className="w-full flex items-center justify-between px-5 py-4 hover:bg-surface-mid transition-colors">
         <div className="flex items-center gap-3">
           <div className="w-8 h-8 rounded-2xl bg-surface-high flex items-center justify-center flex-shrink-0">
             <Icon className="w-4 h-4 text-primary" />
           </div>
           <span className="font-semibold text-foreground">{title}</span>
-          {badge !== undefined && !open && (
-            <span className="inline-flex items-center justify-center min-w-[22px] h-[22px] px-1.5 rounded-full bg-primary/20 text-primary text-xs font-bold">
-              {badge}
-            </span>
+          {badge !== undefined && !open && badge > 0 && (
+            <span className="inline-flex items-center justify-center min-w-[22px] h-[22px] px-1.5 rounded-full bg-primary/20 text-primary text-xs font-bold">{badge}</span>
           )}
         </div>
-        {open ? (
-          <ChevronUp className="w-4 h-4 text-muted-foreground flex-shrink-0" />
-        ) : (
-          <ChevronDown className="w-4 h-4 text-muted-foreground flex-shrink-0" />
-        )}
+        {open ? <ChevronUp className="w-4 h-4 text-muted-foreground flex-shrink-0" /> : <ChevronDown className="w-4 h-4 text-muted-foreground flex-shrink-0" />}
       </button>
-
-      {open && (
-        <div className="px-5 pb-5 border-t border-surface-mid pt-4">
-          {children}
-        </div>
-      )}
+      {open && <div className="px-5 pb-5 border-t border-surface-mid pt-4">{children}</div>}
     </div>
   );
 }
 
-// ─── Main Component ──────────────────────────────────────────────────────────
 export default function ProductDetail() {
   const navigate = useNavigate();
-  const [description, setDescription] = useState(
-    "Plataforma de delivery que conecta restaurantes e clientes com rastreamento em tempo real."
-  );
+  const { id } = useParams<{ id: string }>();
+
+  const [product, setProduct] = useState<Product | null>(null);
+  const [tasks, setTasks] = useState<Task[]>([]);
+  const [files, setFiles] = useState<ProductFile[]>([]);
+  const [activity, setActivity] = useState<ActivityItem[]>([]);
+  const [loading, setLoading] = useState(true);
   const [openSections, setOpenSections] = useState<string[]>(["tasks"]);
+  const [codeCopied, setCodeCopied] = useState(false);
+  const [currentUserRole, setCurrentUserRole] = useState("");
 
-  const toggleSection = (id: string) =>
-    setOpenSections(prev =>
-      prev.includes(id) ? prev.filter(s => s !== id) : [...prev, id]
-    );
+  const toggleSection = (sid: string) =>
+    setOpenSections((prev) => prev.includes(sid) ? prev.filter((s) => s !== sid) : [...prev, sid]);
 
-  const isOpen = (id: string) => openSections.includes(id);
+  const loadProduct = useCallback(async () => {
+    if (!id) return;
+    setLoading(true);
 
-  const activeTasks = mockTasks.filter(t => t.status === "ATIVA").length;
-  const pendingTasks = mockTasks.filter(t => t.status === "BLOQUEADA").length;
+    const { data: { user } } = await supabase.auth.getUser();
+    if (user) {
+      const { data: profile } = await supabase.from("profiles").select("role").eq("id", user.id).single();
+      setCurrentUserRole(profile?.role || "");
+    }
+
+    const [productRes, tasksRes, filesRes, activityRes] = await Promise.all([
+      supabase.from("products").select("id, name, description, status, product_code, team_id").eq("id", id).single(),
+      supabase.from("tasks").select("id, title, status, priority, profiles(name)").eq("product_id", id).neq("status", "COMPLETA").order("created_at", { ascending: false }).limit(30),
+      supabase.from("product_files").select("id, name, file_type, file_url, created_at").eq("product_id", id).order("created_at", { ascending: false }),
+      supabase.from("product_activity").select("id, action, created_at, profiles(name)").eq("product_id", id).order("created_at", { ascending: false }).limit(20),
+    ]);
+
+    if (productRes.data) setProduct(productRes.data);
+    if (tasksRes.data) setTasks(tasksRes.data.map((t: any) => ({ id: t.id, title: t.title, status: t.status, priority: t.priority, assignee_name: t.profiles?.name })));
+    if (filesRes.data) setFiles(filesRes.data.map((f: any) => ({ id: f.id, name: f.name, file_type: f.file_type, file_url: f.file_url, uploaded_at: new Date(f.created_at).toLocaleDateString("pt-BR") })));
+    if (activityRes.data) setActivity(activityRes.data.map((a: any) => ({ id: a.id, action: a.action, user_name: a.profiles?.name, created_at: new Date(a.created_at).toLocaleDateString("pt-BR", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) })));
+
+    setLoading(false);
+  }, [id]);
+
+  useEffect(() => { loadProduct(); }, [loadProduct]);
+
+  const copyProductCode = async () => {
+    if (!product?.product_code) return;
+    await navigator.clipboard.writeText(product.product_code);
+    setCodeCopied(true);
+    setTimeout(() => setCodeCopied(false), 2000);
+  };
+
+  const canManage = ["CEO", "CFO", "CMO", "COO", "Diretor", "Gerente", "Coordenador"].includes(currentUserRole);
+
+  const activeTasks = tasks.filter((t) => t.status !== "COMPLETA");
+
+  if (loading) return <div className="min-h-screen flex items-center justify-center bg-background"><Loader2 className="w-6 h-6 animate-spin text-primary" /></div>;
+  if (!product) return <div className="min-h-screen flex items-center justify-center bg-background"><div className="text-center"><p className="text-muted-foreground mb-4">Produto não encontrado.</p><Button onClick={() => navigate("/products")} variant="outline" className="rounded-2xl">Voltar</Button></div></div>;
 
   return (
-    <div className="min-h-screen bg-background">
-      <div className="p-4 md:p-8 max-w-3xl mx-auto">
-
-        {/* Header */}
-        <div className="flex items-center gap-3 mb-6">
-          <button
-            onClick={() => navigate("/products")}
-            className="p-2 rounded-xl hover:bg-surface-mid transition-colors flex-shrink-0"
-          >
-            <ArrowLeft className="w-5 h-5 text-foreground" />
-          </button>
-          <div className="flex-1 min-w-0">
-            <h1 className="text-2xl font-bold text-foreground font-sans truncate">App Delivery</h1>
-            <p className="text-xs text-muted-foreground">Mobile App • Em Desenvolvimento</p>
-          </div>
+    <div className="min-h-screen bg-background pb-28 px-4 pt-6 max-w-2xl mx-auto">
+      {/* Header */}
+      <div className="flex items-center gap-3 mb-6">
+        <button onClick={() => navigate("/products")} className="w-9 h-9 rounded-2xl bg-surface-low border border-surface-mid flex items-center justify-center hover:bg-surface-mid transition-colors flex-shrink-0">
+          <ArrowLeft className="w-4 h-4 text-foreground" />
+        </button>
+        <div className="flex-1 min-w-0">
+          <h1 className="text-xl font-bold text-foreground truncate">{product.name}</h1>
+          {product.description && <p className="text-xs text-muted-foreground truncate">{product.description}</p>}
         </div>
-
-        {/* Progress banner */}
-        <div className="bg-surface-low rounded-3xl p-5 border border-surface-mid mb-4">
-          <div className="flex items-center justify-between mb-3">
-            <div className="flex gap-2 flex-wrap">
-              <Badge className="bg-blue-500/20 text-blue-400 text-xs">Mobile App</Badge>
-              <Badge className="bg-yellow-500/20 text-yellow-400 text-xs">Em Desenvolvimento</Badge>
-            </div>
-            <span className="text-sm font-bold text-primary">75%</span>
-          </div>
-          <div className="w-full h-2 bg-surface-mid rounded-full overflow-hidden">
-            <div className="h-full bg-primary rounded-full" style={{ width: "75%" }} />
-          </div>
-          <div className="grid grid-cols-3 gap-3 mt-4">
-            <div className="text-center">
-              <p className="text-xs text-muted-foreground">Progresso</p>
-              <p className="font-bold text-primary">75%</p>
-            </div>
-            <div className="text-center border-x border-surface-mid">
-              <p className="text-xs text-muted-foreground">Data prevista de Lançamento</p>
-              <p className="font-bold text-foreground text-sm">15 Abr</p>
-            </div>
-            <div className="text-center">
-              <p className="text-xs text-muted-foreground">Orçamento</p>
-              <p className="font-bold text-primary">R$ 45k</p>
-            </div>
-          </div>
-        </div>
-
-        {/* Description — always visible */}
-        <div className="bg-surface-low rounded-3xl p-5 border border-surface-mid mb-6">
-          <h3 className="font-semibold text-foreground mb-3">Descrição</h3>
-          <Textarea
-            value={description}
-            onChange={e => setDescription(e.target.value)}
-            className="bg-surface-mid border-0 rounded-2xl min-h-20 text-sm"
-          />
-        </div>
-
-        {/* ── Drawer Sections ── */}
-
-        {/* TAREFAS */}
-        <DrawerSection
-          id="tasks"
-          icon={CheckSquare}
-          title="Tarefas"
-          badge={activeTasks + pendingTasks}
-          open={isOpen("tasks")}
-          onToggle={toggleSection}
-        >
-          <div className="space-y-2">
-            {mockTasks.map(task => {
-              const s = getTaskStyle(task.status);
-              return (
-                <div
-                  key={task.id}
-                  className={"flex items-center justify-between p-3 bg-surface-mid rounded-2xl " + s.border}
-                >
-                  <p className="text-sm text-foreground flex-1 pr-3">{task.title}</p>
-                  <Badge className={"text-[10px] px-2 py-0.5 flex-shrink-0 " + s.badge}>{s.label}</Badge>
-                </div>
-              );
-            })}
-          </div>
-        </DrawerSection>
-
-        {/* ARQUIVOS */}
-        <DrawerSection
-          id="files"
-          icon={FolderOpen}
-          title="Arquivos"
-          badge={mockFiles.length}
-          open={isOpen("files")}
-          onToggle={toggleSection}
-        >
-          <div className="bg-surface-mid rounded-2xl p-8 border-2 border-dashed border-surface-high text-center mb-3 hover:border-primary/50 transition-colors cursor-pointer">
-            <Upload className="w-7 h-7 text-muted-foreground mx-auto mb-2" />
-            <p className="text-sm text-foreground">Arraste arquivos ou clique para selecionar</p>
-            <p className="text-xs text-muted-foreground mt-1">Máximo 100 MB por arquivo</p>
-          </div>
-          <div className="space-y-2">
-            {mockFiles.map(file => (
-              <div
-                key={file.id}
-                className="flex items-center gap-3 p-3 bg-surface-mid rounded-2xl hover:bg-surface-high transition-colors"
-              >
-                <div className="w-9 h-9 rounded-xl bg-surface-high flex items-center justify-center flex-shrink-0">
-                  {file.icon === "pdf" ? <FileText className="w-4 h-4 text-red-400" /> :
-                   file.icon === "img" ? <Image className="w-4 h-4 text-blue-400" /> :
-                   <File className="w-4 h-4 text-muted-foreground" />}
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium text-foreground truncate">{file.name}</p>
-                  <p className="text-xs text-muted-foreground">{file.size} · {file.type} · {file.date}</p>
-                </div>
-                <div className="flex gap-1 flex-shrink-0">
-                  <Button variant="ghost" size="icon" className="h-8 w-8 rounded-lg">
-                    <Download className="w-3.5 h-3.5" />
-                  </Button>
-                  <Button variant="ghost" size="icon" className="h-8 w-8 rounded-lg text-red-400">
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </Button>
-                </div>
-              </div>
-            ))}
-          </div>
-        </DrawerSection>
-
-        {/* DOCUMENTOS */}
-        <DrawerSection
-          id="docs"
-          icon={BookOpen}
-          title="Documentos"
-          open={isOpen("docs")}
-          onToggle={toggleSection}
-        >
-          <div className="flex items-center justify-between mb-3">
-            <p className="text-xs text-muted-foreground">Contratos, NDA, propostas e documentos estratégicos.</p>
-            <label className="cursor-pointer flex items-center gap-1.5 text-xs text-primary hover:underline">
-              <Plus className="w-3.5 h-3.5" />
-              Anexar
-              <input type="file" className="sr-only" multiple accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx" />
-            </label>
-          </div>
-          <div className="bg-surface-mid rounded-2xl p-8 border-2 border-dashed border-surface-high text-center hover:border-primary/50 transition-colors cursor-pointer">
-            <FileText className="w-7 h-7 text-muted-foreground mx-auto mb-2" />
-            <p className="text-sm text-foreground">Arraste documentos aqui</p>
-            <p className="text-xs text-muted-foreground mt-1">PDF, Word, Excel, PowerPoint</p>
-          </div>
-        </DrawerSection>
-
-        {/* IDENTIDADE VISUAL */}
-        <DrawerSection
-          id="identity"
-          icon={Palette}
-          title="Identidade Visual"
-          open={isOpen("identity")}
-          onToggle={toggleSection}
-        >
-          <div className="space-y-4">
-            <div>
-              <p className="text-xs text-muted-foreground mb-2 font-medium">Logo</p>
-              <div className="border-2 border-dashed border-surface-high rounded-2xl p-6 text-center hover:border-primary/50 cursor-pointer">
-                <Upload className="w-5 h-5 text-muted-foreground mx-auto mb-1" />
-                <p className="text-xs text-muted-foreground">Arraste sua logo aqui</p>
-              </div>
-            </div>
-            <div>
-              <p className="text-xs text-muted-foreground mb-3 font-medium">Paleta de Cores</p>
-              <div className="grid grid-cols-3 gap-3">
-                {[["Primária", "#91f78e"], ["Secundária", "#2563eb"], ["Accent", "#f59e0b"]].map(([label, color]) => (
-                  <div key={label}>
-                    <p className="text-[10px] text-muted-foreground mb-1">{label}</p>
-                    <div className="flex gap-2 items-center">
-                      <input type="color" defaultValue={color} className="w-8 h-8 rounded-lg cursor-pointer border-0" />
-                      <span className="text-xs text-muted-foreground">{color}</span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-            <div>
-              <p className="text-xs text-muted-foreground mb-2 font-medium">Tipografia</p>
-              <div className="grid grid-cols-2 gap-3">
-                {["Títulos", "Corpo"].map(t => (
-                  <div key={t}>
-                    <p className="text-[10px] text-muted-foreground mb-1">{t}</p>
-                    <Input value="Manrope" className="bg-surface-mid border-0 rounded-xl text-sm" readOnly />
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-        </DrawerSection>
-
-        {/* PESQUISA */}
-        <DrawerSection
-          id="research"
-          icon={Search}
-          title="Pesquisa de Mercado"
-          open={isOpen("research")}
-          onToggle={toggleSection}
-        >
-          <div className="flex flex-wrap gap-2 mb-3">
-            {["Mercado", "Concorrentes", "Público-Alvo", "Tendências"].map(c => (
-              <Badge key={c} variant="secondary" className="bg-surface-mid text-muted-foreground text-xs">{c}</Badge>
-            ))}
-          </div>
-          <Textarea
-            placeholder="Adicione suas notas de pesquisa aqui..."
-            className="bg-surface-mid border-0 rounded-2xl min-h-28 text-sm mb-3"
-          />
-          <Button className="rounded-xl bg-primary hover:bg-primary/80 text-background text-sm">
-            <Plus className="w-4 h-4 mr-2" />
-            Adicionar Pesquisa
-          </Button>
-        </DrawerSection>
-
-        {/* EQUIPE */}
-        <DrawerSection
-          id="team"
-          icon={Users}
-          title="Equipe do Produto"
-          badge={mockTeam.length}
-          open={isOpen("team")}
-          onToggle={toggleSection}
-        >
-          <div className="flex justify-end mb-3">
-            <Dialog>
-              <DialogTrigger asChild>
-                <Button size="sm" className="rounded-2xl bg-primary hover:bg-primary/80 text-sm">
-                  <Plus className="w-4 h-4 mr-1" />
-                  Adicionar
-                </Button>
-              </DialogTrigger>
-              <DialogContent className="bg-surface-low border-surface-mid">
-                <DialogHeader><DialogTitle>Adicionar Membro</DialogTitle></DialogHeader>
-                <div className="space-y-4">
-                  <Input placeholder="Email do membro" className="bg-surface-mid border-0 rounded-xl" />
-                  <Button className="w-full rounded-xl bg-primary hover:bg-primary/80">Adicionar</Button>
-                </div>
-              </DialogContent>
-            </Dialog>
-          </div>
-          <div className="space-y-2">
-            {mockTeam.map(member => (
-              <div
-                key={member.id}
-                className="flex items-center gap-3 p-3 rounded-2xl bg-surface-mid hover:bg-surface-high transition-colors"
-              >
-                <div className="w-9 h-9 rounded-full bg-primary/20 text-primary flex items-center justify-center font-semibold text-xs flex-shrink-0">
-                  {member.avatar}
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium text-foreground">{member.name}</p>
-                  <p className="text-xs text-muted-foreground">{member.role}</p>
-                </div>
-                <Button variant="ghost" size="sm" className="text-xs text-red-400 flex-shrink-0">
-                  Remover
-                </Button>
-              </div>
-            ))}
-          </div>
-        </DrawerSection>
-
-        {/* ATIVIDADE */}
-        <DrawerSection
-          id="activity"
-          icon={Activity}
-          title="Atividade Recente"
-          badge={mockActivity.length}
-          open={isOpen("activity")}
-          onToggle={toggleSection}
-        >
-          <div className="space-y-3">
-            {mockActivity.map(item => (
-              <div
-                key={item.id}
-                className="flex items-start gap-3 pb-3 border-b border-surface-mid last:border-0"
-              >
-                <div className="w-2 h-2 rounded-full bg-primary mt-1.5 flex-shrink-0" />
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm text-foreground">{item.action}</p>
-                  <p className="text-xs text-muted-foreground">{item.user} · {item.timestamp}</p>
-                </div>
-              </div>
-            ))}
-          </div>
-        </DrawerSection>
-
-        {/* CONFIGURAÇÕES */}
-        <DrawerSection
-          id="settings"
-          icon={Settings}
-          title="Configurações do Projeto"
-          open={isOpen("settings")}
-          onToggle={toggleSection}
-        >
-          <div className="space-y-4">
-            {[["Nome do Projeto", "App Delivery"], ["Data prevista de Lançamento", "15/04/2026"]].map(([label, val]) => (
-              <div key={label}>
-                <label className="text-xs text-muted-foreground block mb-1.5">{label}</label>
-                <Input defaultValue={val} className="bg-surface-mid border-0 rounded-xl text-sm" />
-              </div>
-            ))}
-            <div>
-              <label className="text-xs text-muted-foreground block mb-1.5">Status</label>
-              <select className="w-full bg-surface-mid border-0 rounded-xl p-2 text-foreground text-sm">
-                <option>Em Desenvolvimento</option>
-                <option>Lançado</option>
-                <option>Pausado</option>
-                <option>Arquivado</option>
-              </select>
-            </div>
-            <Button className="w-full rounded-xl bg-primary hover:bg-primary/80 text-sm">Salvar Alterações</Button>
-          </div>
-          <div className="mt-4 p-4 rounded-2xl border border-red-500/20 space-y-2">
-            <p className="text-xs font-semibold text-red-400 flex items-center gap-1.5">
-              <AlertTriangle className="w-3.5 h-3.5" />
-              Zona de Perigo
-            </p>
-            <Button variant="outline" className="w-full rounded-xl text-red-400 border-red-500/30 text-sm">
-              Arquivar Projeto
-            </Button>
-            <Button variant="outline" className="w-full rounded-xl text-red-400 border-red-500/30 text-sm">
-              Deletar Projeto
-            </Button>
-          </div>
-        </DrawerSection>
-
+        <Badge variant="outline" className={`text-xs rounded-full border ${product.status === "ativo" ? "border-green-500/30 text-green-400 bg-green-500/10" : "border-surface-high text-muted-foreground"}`}>{product.status}</Badge>
       </div>
+
+      {/* Tarefas */}
+      <DrawerSection id="tasks" icon={ListTodo} title="Tarefas" badge={activeTasks.length} open={openSections.includes("tasks")} onToggle={toggleSection}>
+        {tasks.length === 0 ? (
+          <p className="text-sm text-muted-foreground text-center py-2">Nenhuma tarefa ativa.</p>
+        ) : (
+          <div className="space-y-2">
+            {tasks.map((task) => (
+              <div key={task.id} className="flex items-center gap-3 p-3 rounded-2xl bg-surface-mid hover:bg-surface-high transition-colors group">
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium text-foreground truncate">{task.title}</p>
+                  {task.assignee_name && <p className="text-xs text-muted-foreground">{task.assignee_name}</p>}
+                </div>
+                {task.priority && <Badge variant="outline" className={`text-xs rounded-full border ${STATUS_COLORS[task.status] || ""}`}>{task.status}</Badge>}
+                <button onClick={() => navigate(`/products/${id}/tasks/${task.id}`)} className="w-8 h-8 rounded-xl bg-surface-low hover:bg-primary/20 flex items-center justify-center transition-colors flex-shrink-0" title="Abrir tarefa">
+                  <ExternalLink className="w-3.5 h-3.5 text-primary" />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+        {canManage && (
+          <Button variant="outline" size="sm" className="mt-3 rounded-2xl border-primary/50 text-primary w-full gap-2">
+            <Plus className="w-4 h-4" />Nova Tarefa
+          </Button>
+        )}
+      </DrawerSection>
+
+      {/* Arquivos */}
+      <DrawerSection id="files" icon={Upload} title="Arquivos" badge={files.length} open={openSections.includes("files")} onToggle={toggleSection}>
+        {files.length === 0 ? (
+          <p className="text-sm text-muted-foreground text-center py-2">Nenhum arquivo enviado ainda.</p>
+        ) : (
+          <div className="space-y-2">
+            {files.map((f) => (
+              <div key={f.id} className="flex items-center gap-3 p-3 rounded-2xl bg-surface-mid">
+                <FileText className="w-4 h-4 text-primary flex-shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm text-foreground truncate">{f.name}</p>
+                  <p className="text-xs text-muted-foreground">{f.uploaded_at}</p>
+                </div>
+                <a href={f.file_url} target="_blank" rel="noopener noreferrer" className="w-8 h-8 rounded-xl bg-surface-low hover:bg-primary/20 flex items-center justify-center transition-colors">
+                  <ExternalLink className="w-3.5 h-3.5 text-primary" />
+                </a>
+              </div>
+            ))}
+          </div>
+        )}
+        {canManage && (
+          <Button variant="outline" size="sm" className="mt-3 rounded-2xl border-primary/50 text-primary w-full gap-2">
+            <Upload className="w-4 h-4" />Enviar Arquivo
+          </Button>
+        )}
+      </DrawerSection>
+
+      {/* Documentos */}
+      <DrawerSection id="docs" icon={FileText} title="Documentos" open={openSections.includes("docs")} onToggle={toggleSection}>
+        <p className="text-sm text-muted-foreground text-center py-2">Nenhum documento adicionado.</p>
+        {canManage && (
+          <Button variant="outline" size="sm" className="mt-3 rounded-2xl border-primary/50 text-primary w-full gap-2">
+            <Plus className="w-4 h-4" />Novo Documento
+          </Button>
+        )}
+      </DrawerSection>
+
+      {/* Identidade Visual */}
+      <DrawerSection id="brand" icon={Image} title="Identidade Visual" open={openSections.includes("brand")} onToggle={toggleSection}>
+        <p className="text-sm text-muted-foreground text-center py-2">Nenhum ativo de marca adicionado.</p>
+        {canManage && (
+          <Button variant="outline" size="sm" className="mt-3 rounded-2xl border-primary/50 text-primary w-full gap-2">
+            <Upload className="w-4 h-4" />Enviar Ativo
+          </Button>
+        )}
+      </DrawerSection>
+
+      {/* Equipe */}
+      <DrawerSection id="team" icon={Users} title="Equipe do Produto" open={openSections.includes("team")} onToggle={toggleSection}>
+        <p className="text-sm text-muted-foreground text-center py-2">Nenhum membro atribuído diretamente.</p>
+        {canManage && (
+          <Button variant="outline" size="sm" className="mt-3 rounded-2xl border-primary/50 text-primary w-full gap-2">
+            <Plus className="w-4 h-4" />Adicionar Membro
+          </Button>
+        )}
+      </DrawerSection>
+
+      {/* Atividade Recente */}
+      <DrawerSection id="activity" icon={Activity} title="Atividade Recente" badge={activity.length} open={openSections.includes("activity")} onToggle={toggleSection}>
+        {activity.length === 0 ? (
+          <p className="text-sm text-muted-foreground text-center py-2">Nenhuma atividade registrada.</p>
+        ) : (
+          <div className="space-y-3">
+            {activity.map((a) => (
+              <div key={a.id} className="flex gap-3">
+                <div className="w-1.5 h-1.5 rounded-full bg-primary mt-2 flex-shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm text-foreground">{a.action}</p>
+                  <p className="text-xs text-muted-foreground">{a.user_name && `${a.user_name} · `}{a.created_at}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </DrawerSection>
+
+      {/* Configurações */}
+      {canManage && (
+        <DrawerSection id="settings" icon={Settings} title="Configurações" open={openSections.includes("settings")} onToggle={toggleSection}>
+          <div className="space-y-4">
+            <div className="space-y-1">
+              <Label className="text-xs text-muted-foreground uppercase tracking-wide">Nome do produto</Label>
+              <Input defaultValue={product.name} className="bg-surface-mid border-surface-high rounded-2xl" />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs text-muted-foreground uppercase tracking-wide">Descrição</Label>
+              <Input defaultValue={product.description || ""} placeholder="Descrição do produto" className="bg-surface-mid border-surface-high rounded-2xl" />
+            </div>
+
+            {/* Código do Produto */}
+            <div className="border-t border-surface-mid pt-4">
+              <p className="text-xs text-muted-foreground uppercase tracking-wide font-semibold mb-2">Código do Produto</p>
+              {product.product_code ? (
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2 bg-surface-mid rounded-2xl p-3">
+                    <code className="flex-1 text-sm font-mono tracking-widest text-primary">{product.product_code}</code>
+                    <button onClick={copyProductCode} className="w-8 h-8 rounded-xl hover:bg-surface-high flex items-center justify-center transition-colors flex-shrink-0">
+                      {codeCopied ? <Check className="w-4 h-4 text-green-400" /> : <Copy className="w-4 h-4 text-muted-foreground" />}
+                    </button>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Compartilhe este código com outras equipes. Elas podem entrar no produto via "Novo Produto" → "Entrar com código".
+                  </p>
+                </div>
+              ) : (
+                <p className="text-xs text-muted-foreground">Código não gerado.</p>
+              )}
+            </div>
+
+            <div className="border-t border-surface-mid pt-3">
+              <button className="w-full py-2.5 text-sm text-red-400 border border-red-500/30 rounded-2xl hover:bg-red-500/10 transition-colors">
+                Arquivar Produto
+              </button>
+            </div>
+          </div>
+        </DrawerSection>
+      )}
     </div>
   );
 }
