@@ -5,22 +5,26 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Label } from "@/components/ui/label";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import {
-  Dialog, DialogContent, DialogHeader, DialogTitle,
-} from "@/components/ui/dialog";
-import { supabase } from "@/integrations/supabase/client";
+  collection, query, where, getDocs, addDoc, doc, getDoc,
+  serverTimestamp, orderBy,
+} from "firebase/firestore";
+import { getAuth } from "firebase/auth";
+import { db } from "@/integrations/firebase/client";
 
 interface Product {
   id: string;
   name: string;
   description?: string;
   status: string;
-  product_code?: string;
+  productCode?: string;
 }
 
 function generateProductCode(): string {
   const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
-  const part = (n: number) => Array.from({ length: n }, () => chars[Math.floor(Math.random() * chars.length)]).join("");
+  const part = (n: number) =>
+    Array.from({ length: n }, () => chars[Math.floor(Math.random() * chars.length)]).join("");
   return `${part(4)}-${part(4)}`;
 }
 
@@ -36,45 +40,73 @@ export default function Products() {
   const [joinCode, setJoinCode] = useState("");
   const [saving, setSaving] = useState(false);
   const [joinError, setJoinError] = useState("");
-  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [currentUserRole, setCurrentUserRole] = useState("");
 
   const loadProducts = useCallback(async () => {
     setLoading(true);
-    const { data: { user } } = await supabase.auth.getUser();
+    const user = getAuth().currentUser;
     if (!user) return;
-    setCurrentUserId(user.id);
 
-    const { data: profile } = await supabase.from("profiles").select("role").eq("id", user.id).single();
-    setCurrentUserRole(profile?.role || "");
+    const profileSnap = await getDoc(doc(db, "profiles", user.uid));
+    setCurrentUserRole(profileSnap.data()?.role || "");
 
-    // Load products the user owns or has access to
-    const { data: ownedProducts } = await supabase.from("products").select("id, name, description, status, product_code").order("name");
-    const { data: accessProducts } = await supabase.from("product_access").select("product_id, products(id, name, description, status, product_code)").eq("user_id", user.id);
+    const [ownedSnap, accessSnap] = await Promise.all([
+      getDocs(query(collection(db, "products"), orderBy("name"))),
+      getDocs(query(collection(db, "productAccess"), where("userId", "==", user.uid))),
+    ]);
 
-    const owned = ownedProducts || [];
-    const accessed = (accessProducts || []).map((a: any) => a.products).filter(Boolean);
-    const allIds = new Set(owned.map((p) => p.id));
-    const merged = [...owned, ...accessed.filter((p: any) => !allIds.has(p.id))];
+    const owned: Product[] = ownedSnap.docs.map((d) => ({
+      id: d.id,
+      name: d.data().name,
+      description: d.data().description,
+      status: d.data().status,
+      productCode: d.data().productCode,
+    }));
 
-    setProducts(merged);
+    const accessIds = accessSnap.docs.map((d) => d.data().productId);
+    const ownedIds = new Set(owned.map((p) => p.id));
+    const extraProducts: Product[] = [];
+
+    for (const pid of accessIds) {
+      if (!ownedIds.has(pid)) {
+        const pSnap = await getDoc(doc(db, "products", pid));
+        if (pSnap.exists()) {
+          extraProducts.push({
+            id: pSnap.id,
+            name: pSnap.data().name,
+            description: pSnap.data().description,
+            status: pSnap.data().status,
+            productCode: pSnap.data().productCode,
+          });
+        }
+      }
+    }
+
+    setProducts([...owned, ...extraProducts]);
     setLoading(false);
   }, []);
 
   useEffect(() => { loadProducts(); }, [loadProducts]);
 
-  const openDialog = () => { setDialogMode("choose"); setDialogOpen(true); setJoinError(""); };
+  const openDialog = () => {
+    setDialogMode("choose");
+    setDialogOpen(true);
+    setJoinError("");
+  };
 
   const handleCreate = async () => {
     if (!newName.trim()) return;
     setSaving(true);
+    const user = getAuth().currentUser;
     const code = generateProductCode();
-    await supabase.from("products").insert({
+    await addDoc(collection(db, "products"), {
       name: newName.trim(),
       description: newDesc.trim() || null,
       status: "ativo",
-      product_code: code,
-      created_by: currentUserId,
+      productCode: code,
+      createdBy: user?.uid,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
     });
     setNewName(""); setNewDesc(""); setSaving(false); setDialogOpen(false);
     loadProducts();
@@ -85,29 +117,47 @@ export default function Products() {
     if (!code) return;
     setSaving(true);
     setJoinError("");
+    const user = getAuth().currentUser;
+    if (!user) return;
 
-    const { data: product } = await supabase.from("products").select("id, name").eq("product_code", code).maybeSingle();
-    if (!product) {
+    const q = query(collection(db, "products"), where("productCode", "==", code));
+    const snap = await getDocs(q);
+
+    if (snap.empty) {
       setJoinError("Código inválido. Verifique e tente novamente.");
       setSaving(false);
       return;
     }
 
-    // Check if already has access
-    const { data: existing } = await supabase.from("product_access").select("id").eq("product_id", product.id).eq("user_id", currentUserId).maybeSingle();
-    if (existing) {
+    const product = snap.docs[0];
+    const accessQ = query(
+      collection(db, "productAccess"),
+      where("productId", "==", product.id),
+      where("userId", "==", user.uid)
+    );
+    const accessSnap = await getDocs(accessQ);
+
+    if (!accessSnap.empty) {
       setJoinError("Você já tem acesso a este produto.");
       setSaving(false);
       return;
     }
 
-    await supabase.from("product_access").insert({ product_id: product.id, user_id: currentUserId, access_level: "view" });
+    await addDoc(collection(db, "productAccess"), {
+      productId: product.id,
+      userId: user.uid,
+      accessLevel: "view",
+      grantedAt: serverTimestamp(),
+    });
+
     setJoinCode(""); setSaving(false); setDialogOpen(false);
     loadProducts();
   };
 
   const canCreate = ["CEO", "CFO", "CMO", "COO", "Diretor", "Gerente"].includes(currentUserRole);
-  const filtered = products.filter((p) => p.name.toLowerCase().includes(search.toLowerCase()));
+  const filtered = products.filter((p) =>
+    p.name.toLowerCase().includes(search.toLowerCase())
+  );
 
   return (
     <div className="min-h-screen bg-background pb-24 px-4 pt-6 max-w-2xl mx-auto">
@@ -123,15 +173,20 @@ export default function Products() {
 
       <div className="relative mb-5">
         <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-        <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Buscar produto..." className="pl-10 bg-surface-low border-surface-mid rounded-2xl h-11" />
+        <Input value={search} onChange={(e) => setSearch(e.target.value)}
+          placeholder="Buscar produto..." className="pl-10 bg-surface-low border-surface-mid rounded-2xl h-11" />
       </div>
 
       {loading ? (
-        <div className="flex items-center justify-center py-16"><Loader2 className="w-6 h-6 animate-spin text-primary" /></div>
+        <div className="flex items-center justify-center py-16">
+          <Loader2 className="w-6 h-6 animate-spin text-primary" />
+        </div>
       ) : filtered.length === 0 ? (
         <div className="bg-surface-low border border-surface-mid rounded-3xl p-10 text-center">
           <Package className="w-8 h-8 text-muted-foreground mx-auto mb-3" />
-          <p className="text-sm text-muted-foreground">{products.length === 0 ? "Nenhum produto ainda." : "Nenhum produto encontrado."}</p>
+          <p className="text-sm text-muted-foreground">
+            {products.length === 0 ? "Nenhum produto ainda." : "Nenhum produto encontrado."}
+          </p>
           {canCreate && <p className="text-xs text-muted-foreground mt-1">Clique em "Novo Produto" para começar.</p>}
         </div>
       ) : (
@@ -147,7 +202,9 @@ export default function Products() {
                 {product.description && <p className="text-xs text-muted-foreground truncate">{product.description}</p>}
               </div>
               <div className="flex items-center gap-2 flex-shrink-0">
-                <Badge variant="outline" className={`text-xs rounded-full border ${product.status === "ativo" ? "border-green-500/30 text-green-400 bg-green-500/10" : "border-surface-high text-muted-foreground"}`}>{product.status}</Badge>
+                <Badge variant="outline" className={`text-xs rounded-full border ${product.status === "ativo" ? "border-green-500/30 text-green-400 bg-green-500/10" : "border-surface-high text-muted-foreground"}`}>
+                  {product.status}
+                </Badge>
                 <ArrowRight className="w-4 h-4 text-muted-foreground" />
               </div>
             </button>
@@ -155,11 +212,12 @@ export default function Products() {
         </div>
       )}
 
-      {/* New Product Dialog */}
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent className="bg-surface-low border-surface-mid rounded-3xl mx-4 max-w-sm">
           <DialogHeader>
-            <DialogTitle>{dialogMode === "choose" ? "Novo Produto" : dialogMode === "create" ? "Criar Produto" : "Entrar com Código"}</DialogTitle>
+            <DialogTitle>
+              {dialogMode === "choose" ? "Novo Produto" : dialogMode === "create" ? "Criar Produto" : "Entrar com Código"}
+            </DialogTitle>
           </DialogHeader>
 
           {dialogMode === "choose" && (
@@ -191,11 +249,11 @@ export default function Products() {
             <div className="space-y-3 mt-2">
               <div className="space-y-1">
                 <Label className="text-xs text-muted-foreground uppercase tracking-wide">Nome do produto</Label>
-                <Input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="Ex: App Mobile SalsaHub" className="bg-surface-mid border-surface-high rounded-2xl" />
+                <Input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="Ex: App Mobile" className="bg-surface-mid border-surface-high rounded-2xl" />
               </div>
               <div className="space-y-1">
                 <Label className="text-xs text-muted-foreground uppercase tracking-wide">Descrição (opcional)</Label>
-                <Input value={newDesc} onChange={(e) => setNewDesc(e.target.value)} placeholder="Breve descrição do produto" className="bg-surface-mid border-surface-high rounded-2xl" />
+                <Input value={newDesc} onChange={(e) => setNewDesc(e.target.value)} placeholder="Breve descrição" className="bg-surface-mid border-surface-high rounded-2xl" />
               </div>
               <div className="flex gap-2 pt-1">
                 <Button variant="outline" onClick={() => setDialogMode("choose")} className="flex-1 rounded-2xl">Voltar</Button>
@@ -210,11 +268,11 @@ export default function Products() {
             <div className="space-y-3 mt-2">
               <div className="space-y-1">
                 <Label className="text-xs text-muted-foreground uppercase tracking-wide">Código do produto</Label>
-                <Input value={joinCode} onChange={(e) => setJoinCode(e.target.value.toUpperCase())} placeholder="Ex: ABCD-EFGH" maxLength={9}
-                  className="bg-surface-mid border-surface-high rounded-2xl font-mono tracking-widest" />
+                <Input value={joinCode} onChange={(e) => setJoinCode(e.target.value.toUpperCase())} placeholder="Ex: ABCD-EFGH"
+                  maxLength={9} className="bg-surface-mid border-surface-high rounded-2xl font-mono tracking-widest" />
                 {joinError && <p className="text-xs text-red-400">{joinError}</p>}
               </div>
-              <p className="text-xs text-muted-foreground">Solicite o código ao responsável pelo produto da outra equipe.</p>
+              <p className="text-xs text-muted-foreground">Solicite o código ao responsável pelo produto.</p>
               <div className="flex gap-2 pt-1">
                 <Button variant="outline" onClick={() => { setDialogMode("choose"); setJoinError(""); }} className="flex-1 rounded-2xl">Voltar</Button>
                 <Button onClick={handleJoin} disabled={saving || !joinCode} className="flex-1 bg-primary text-background rounded-2xl font-semibold">
