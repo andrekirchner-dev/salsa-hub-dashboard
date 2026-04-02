@@ -1,6 +1,10 @@
 import { useState } from "react";
-import { supabase } from "@/integrations/supabase/client";
-import type { User } from "@supabase/supabase-js";
+import { signOut } from "firebase/auth";
+import {
+  doc, getDoc, setDoc, updateDoc, serverTimestamp,
+} from "firebase/firestore";
+import type { User } from "firebase/auth";
+import { auth, db } from "@/integrations/firebase/client";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -12,7 +16,7 @@ interface Props {
 }
 
 export default function SetupProfile({ user, onComplete }: Props) {
-  const [name, setName] = useState(user.user_metadata?.full_name || "");
+  const [name, setName] = useState(user.displayName || "");
   const [phone, setPhone] = useState("");
   const [cargoCode, setCargoCode] = useState("");
   const [loading, setLoading] = useState(false);
@@ -41,60 +45,60 @@ export default function SetupProfile({ user, onComplete }: Props) {
 
     const code = cargoCode.trim().toUpperCase();
 
-    const { data: validCode, error: codeError } = await supabase
-      .from("cargo_codes")
-      .select("role, used")
-      .eq("code", code)
-      .maybeSingle();
+    try {
+      // Validate cargo code in Firestore
+      const codeRef = doc(db, "cargoCodes", code);
+      const codeSnap = await getDoc(codeRef);
 
-    if (codeError || !validCode) {
-      setError("Código de cargo inválido. Solicite um código à equipe ADM.");
-      setLoading(false);
-      return;
-    }
+      if (!codeSnap.exists()) {
+        setError("Código de cargo inválido. Solicite um código à equipe ADM.");
+        setLoading(false);
+        return;
+      }
 
-    if (validCode.used) {
-      setError("Este código já foi utilizado. Solicite um novo código.");
-      setLoading(false);
-      return;
-    }
+      const codeData = codeSnap.data();
+      if (codeData.used) {
+        setError("Este código já foi utilizado. Solicite um novo código.");
+        setLoading(false);
+        return;
+      }
 
-    const { error: profileError } = await supabase.from("profiles").upsert({
-      id: user.id,
-      name: name.trim(),
-      phone: phone.trim(),
-      cargo_code: code,
-      role: validCode.role,
-      email: user.email,
-      avatar_url: user.user_metadata?.avatar_url || null,
-      updated_at: new Date().toISOString(),
-    });
+      // Create/update profile document
+      await setDoc(doc(db, "profiles", user.uid), {
+        name: name.trim(),
+        email: user.email,
+        phone: phone.trim(),
+        cargoCode: code,
+        role: codeData.role,
+        avatarUrl: user.photoURL || null,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
 
-    if (profileError) {
+      // Mark cargo code as used
+      await updateDoc(codeRef, {
+        used: true,
+        usedBy: user.uid,
+        usedAt: serverTimestamp(),
+      });
+
+      onComplete();
+    } catch {
       setError("Erro ao salvar perfil. Tente novamente.");
+    } finally {
       setLoading(false);
-      return;
     }
-
-    await supabase
-      .from("cargo_codes")
-      .update({ used: true, used_by: user.id })
-      .eq("code", code);
-
-    onComplete();
   };
 
-  const handleLogout = async () => {
-    await supabase.auth.signOut();
-  };
+  const handleLogout = () => signOut(auth);
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-background p-4">
       <div className="w-full max-w-sm space-y-6">
         <div className="text-center">
-          {user.user_metadata?.avatar_url ? (
+          {user.photoURL ? (
             <img
-              src={user.user_metadata.avatar_url}
+              src={user.photoURL}
               alt={name}
               className="w-16 h-16 mx-auto rounded-full mb-3 border-2 border-primary/40"
             />
@@ -107,7 +111,7 @@ export default function SetupProfile({ user, onComplete }: Props) {
           <p className="text-sm text-muted-foreground mt-1">
             Olá,{" "}
             <span className="text-primary font-medium">
-              {user.user_metadata?.full_name?.split(" ")[0] || ""}
+              {user.displayName?.split(" ")[0] || ""}
             </span>
             ! Precisamos de mais algumas informações.
           </p>
