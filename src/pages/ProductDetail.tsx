@@ -1,74 +1,51 @@
 import { useState, useEffect, useCallback } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import {
-  ArrowLeft, ChevronDown, ChevronUp, Plus, ExternalLink,
-  Copy, Check, Upload, FileText, Image, Users, Activity,
-  Settings, ListTodo, Loader2, Trash2,
+  ArrowLeft, ChevronDown, ChevronUp, Upload, Plus, Trash2,
+  FileText, Image, File, CheckSquare, FolderOpen,
+  Palette, Users, Activity, Settings, Copy, Check,
+  ExternalLink, Loader2, QrCode,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
+import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
-import { supabase } from "@/integrations/supabase/client";
-
-interface Product {
-  id: string;
-  name: string;
-  description?: string;
-  status: string;
-  product_code?: string;
-  team_id?: string;
-}
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import {
+  collection, doc, getDoc, getDocs, addDoc, updateDoc,
+  query, orderBy, where, limit, serverTimestamp,
+} from "firebase/firestore";
+import { getAuth } from "firebase/auth";
+import { db } from "@/integrations/firebase/client";
 
 interface Task {
-  id: string;
-  title: string;
-  status: string;
-  priority?: string;
-  assignee_name?: string;
+  id: string; title: string; description?: string;
+  status: "COMPLETA" | "ATIVA" | "BLOQUEADA" | "MILESTONE" | "PENDENTE";
+  assignedTo?: string; assigneeName?: string;
 }
+interface FileItem { id: string; name: string; size: string; type: string; url?: string; uploadedAt: string; }
+interface ActivityItem { id: string; action: string; userName: string; createdAt: string; }
+interface TeamMember { id: string; name: string; role: string; avatarUrl?: string; }
+interface Product { id: string; name: string; description: string; status: string; productCode: string; teamId?: string; }
 
-interface ProductFile {
-  id: string;
-  name: string;
-  file_type: string;
-  file_url: string;
-  uploaded_at: string;
-}
-
-interface ActivityItem {
-  id: string;
-  action: string;
-  user_name?: string;
-  created_at: string;
-}
-
-interface SectionProps {
-  id: string;
-  icon: React.ElementType;
-  title: string;
-  badge?: number;
-  open: boolean;
-  onToggle: (id: string) => void;
-  children: React.ReactNode;
-}
-
-const STATUS_COLORS: Record<string, string> = {
-  PENDENTE: "bg-blue-500/20 text-blue-400 border-blue-500/30",
-  ATIVA: "bg-primary/20 text-primary border-primary/30",
-  EM_ANDAMENTO: "bg-yellow-500/20 text-yellow-400 border-yellow-500/30",
-  BLOQUEADA: "bg-red-500/20 text-red-400 border-red-500/30",
-  COMPLETA: "bg-green-500/20 text-green-400 border-green-500/30",
+const STATUS_STYLE: Record<string, { label: string; badge: string; border: string }> = {
+  COMPLETA: { label: "Completa", badge: "bg-green-500/20 text-green-400 border-green-500/30", border: "border-l-4 border-green-500" },
+  ATIVA: { label: "Ativa", badge: "bg-primary/20 text-primary border-primary/30", border: "border-l-4 border-primary" },
+  PENDENTE: { label: "Pendente", badge: "bg-blue-500/20 text-blue-400 border-blue-500/30", border: "border-l-4 border-blue-500" },
+  BLOQUEADA: { label: "Bloqueada", badge: "bg-red-500/20 text-red-400 border-red-500/30", border: "border-l-4 border-red-500" },
+  MILESTONE: { label: "Milestone", badge: "bg-purple-500/20 text-purple-400 border-purple-500/30", border: "border-l-4 border-purple-500" },
 };
+const FILE_ICONS: Record<string, React.ElementType> = { image: Image, pdf: FileText, doc: FileText, default: File };
+
+interface SectionProps { id: string; icon: React.ElementType; title: string; badge?: number; open: boolean; onToggle: (id: string) => void; children: React.ReactNode; }
 
 function DrawerSection({ id, icon: Icon, title, badge, open, onToggle, children }: SectionProps) {
   return (
     <div className="bg-surface-low rounded-3xl border border-surface-mid overflow-hidden mb-3">
       <button onClick={() => onToggle(id)} className="w-full flex items-center justify-between px-5 py-4 hover:bg-surface-mid transition-colors">
         <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-2xl bg-surface-high flex items-center justify-center flex-shrink-0">
-            <Icon className="w-4 h-4 text-primary" />
-          </div>
+          <div className="w-8 h-8 rounded-2xl bg-surface-high flex items-center justify-center flex-shrink-0"><Icon className="w-4 h-4 text-primary" /></div>
           <span className="font-semibold text-foreground">{title}</span>
           {badge !== undefined && !open && badge > 0 && (
             <span className="inline-flex items-center justify-center min-w-[22px] h-[22px] px-1.5 rounded-full bg-primary/20 text-primary text-xs font-bold">{badge}</span>
@@ -84,215 +61,283 @@ function DrawerSection({ id, icon: Icon, title, badge, open, onToggle, children 
 export default function ProductDetail() {
   const navigate = useNavigate();
   const { id } = useParams<{ id: string }>();
-
   const [product, setProduct] = useState<Product | null>(null);
   const [tasks, setTasks] = useState<Task[]>([]);
-  const [files, setFiles] = useState<ProductFile[]>([]);
+  const [files, setFiles] = useState<FileItem[]>([]);
   const [activity, setActivity] = useState<ActivityItem[]>([]);
+  const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
   const [loading, setLoading] = useState(true);
   const [openSections, setOpenSections] = useState<string[]>(["tasks"]);
   const [codeCopied, setCodeCopied] = useState(false);
   const [currentUserRole, setCurrentUserRole] = useState("");
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+  const [newTaskTitle, setNewTaskTitle] = useState("");
+  const [addingTask, setAddingTask] = useState(false);
+  const [editName, setEditName] = useState("");
+  const [editDesc, setEditDesc] = useState("");
+  const [savingEdit, setSavingEdit] = useState(false);
 
   const toggleSection = (sid: string) =>
     setOpenSections((prev) => prev.includes(sid) ? prev.filter((s) => s !== sid) : [...prev, sid]);
+  const isOpen = (sid: string) => openSections.includes(sid);
 
   const loadProduct = useCallback(async () => {
     if (!id) return;
     setLoading(true);
-
-    const { data: { user } } = await supabase.auth.getUser();
+    const user = getAuth().currentUser;
     if (user) {
-      const { data: profile } = await supabase.from("profiles").select("role").eq("id", user.id).single();
-      setCurrentUserRole(profile?.role || "");
+      setCurrentUserId(user.uid);
+      const profileSnap = await getDoc(doc(db, "profiles", user.uid));
+      setCurrentUserRole(profileSnap.data()?.role || "");
     }
+    const productSnap = await getDoc(doc(db, "products", id));
+    if (!productSnap.exists()) { setLoading(false); return; }
+    const pData = productSnap.data();
+    const productData: Product = {
+      id: productSnap.id, name: pData.name, description: pData.description || "",
+      status: pData.status || "ativo", productCode: pData.productCode || "", teamId: pData.teamId,
+    };
+    setProduct(productData); setEditName(productData.name); setEditDesc(productData.description);
 
-    const [productRes, tasksRes, filesRes, activityRes] = await Promise.all([
-      supabase.from("products").select("id, name, description, status, product_code, team_id").eq("id", id).single(),
-      supabase.from("tasks").select("id, title, status, priority, profiles(name)").eq("product_id", id).neq("status", "COMPLETA").order("created_at", { ascending: false }).limit(30),
-      supabase.from("product_files").select("id, name, file_type, file_url, created_at").eq("product_id", id).order("created_at", { ascending: false }),
-      supabase.from("product_activity").select("id, action, created_at, profiles(name)").eq("product_id", id).order("created_at", { ascending: false }).limit(20),
-    ]);
+    const tasksSnap = await getDocs(query(collection(db, "tasks"), where("productId", "==", id), orderBy("createdAt")));
+    const tasksData: Task[] = [];
+    for (const d of tasksSnap.docs) {
+      const t = d.data();
+      let assigneeName: string | undefined;
+      if (t.assignedTo) { const aSnap = await getDoc(doc(db, "profiles", t.assignedTo)); assigneeName = aSnap.data()?.name; }
+      tasksData.push({ id: d.id, title: t.title, description: t.description, status: t.status || "PENDENTE", assignedTo: t.assignedTo, assigneeName });
+    }
+    setTasks(tasksData);
 
-    if (productRes.data) setProduct(productRes.data);
-    if (tasksRes.data) setTasks(tasksRes.data.map((t: any) => ({ id: t.id, title: t.title, status: t.status, priority: t.priority, assignee_name: t.profiles?.name })));
-    if (filesRes.data) setFiles(filesRes.data.map((f: any) => ({ id: f.id, name: f.name, file_type: f.file_type, file_url: f.file_url, uploaded_at: new Date(f.created_at).toLocaleDateString("pt-BR") })));
-    if (activityRes.data) setActivity(activityRes.data.map((a: any) => ({ id: a.id, action: a.action, user_name: a.profiles?.name, created_at: new Date(a.created_at).toLocaleDateString("pt-BR", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) })));
+    const filesSnap = await getDocs(query(collection(db, "productFiles"), where("productId", "==", id), orderBy("uploadedAt", "desc")));
+    setFiles(filesSnap.docs.map((d) => {
+      const f = d.data();
+      return { id: d.id, name: f.name, size: f.size || "—", type: f.type || "default", url: f.url,
+        uploadedAt: f.uploadedAt?.toDate ? f.uploadedAt.toDate().toLocaleDateString("pt-BR") : "—" };
+    }));
 
+    const activitySnap = await getDocs(query(collection(db, "productActivity"), where("productId", "==", id), orderBy("createdAt", "desc"), limit(20)));
+    const activityData: ActivityItem[] = [];
+    for (const d of activitySnap.docs) {
+      const a = d.data();
+      let userName = "—";
+      if (a.userId) { const uSnap = await getDoc(doc(db, "profiles", a.userId)); userName = uSnap.data()?.name || "—"; }
+      activityData.push({ id: d.id, action: a.action, userName,
+        createdAt: a.createdAt?.toDate ? a.createdAt.toDate().toLocaleDateString("pt-BR") : "—" });
+    }
+    setActivity(activityData);
+
+    if (productData.teamId) {
+      const membersSnap = await getDocs(collection(db, "teams", productData.teamId, "members"));
+      const membersData: TeamMember[] = [];
+      for (const d of membersSnap.docs) {
+        const mData = d.data(); const userId = mData.userId || d.id;
+        const profileSnap = await getDoc(doc(db, "profiles", userId)); const pf = profileSnap.data();
+        membersData.push({ id: userId, name: pf?.name || "—", role: mData.role || pf?.role || "—", avatarUrl: pf?.avatarUrl });
+      }
+      setTeamMembers(membersData);
+    }
     setLoading(false);
   }, [id]);
 
   useEffect(() => { loadProduct(); }, [loadProduct]);
 
-  const copyProductCode = async () => {
-    if (!product?.product_code) return;
-    await navigator.clipboard.writeText(product.product_code);
-    setCodeCopied(true);
-    setTimeout(() => setCodeCopied(false), 2000);
+  const copyCode = () => {
+    if (product?.productCode) {
+      navigator.clipboard.writeText(product.productCode).then(() => { setCodeCopied(true); setTimeout(() => setCodeCopied(false), 2000); });
+    }
   };
 
-  const canManage = ["CEO", "CFO", "CMO", "COO", "Diretor", "Gerente", "Coordenador"].includes(currentUserRole);
+  const handleAddTask = async () => {
+    if (!newTaskTitle.trim() || !id || !currentUserId) return;
+    setAddingTask(true);
+    await addDoc(collection(db, "tasks"), { productId: id, title: newTaskTitle.trim(), status: "PENDENTE", createdBy: currentUserId, createdAt: serverTimestamp() });
+    await addDoc(collection(db, "productActivity"), { productId: id, action: `Tarefa criada: ${newTaskTitle.trim()}`, userId: currentUserId, createdAt: serverTimestamp() });
+    setNewTaskTitle(""); setAddingTask(false); loadProduct();
+  };
 
-  const activeTasks = tasks.filter((t) => t.status !== "COMPLETA");
+  const handleSaveEdit = async () => {
+    if (!id || !editName.trim()) return;
+    setSavingEdit(true);
+    await updateDoc(doc(db, "products", id), { name: editName.trim(), description: editDesc.trim(), updatedAt: serverTimestamp() });
+    if (currentUserId) await addDoc(collection(db, "productActivity"), { productId: id, action: "Produto atualizado", userId: currentUserId, createdAt: serverTimestamp() });
+    setSavingEdit(false); loadProduct();
+  };
+
+  const activeTasks = tasks.filter((t) => t.status === "ATIVA").length;
+  const pendingTasks = tasks.filter((t) => t.status === "PENDENTE").length;
+  const canEdit = ["CEO", "CFO", "CMO", "COO", "Diretor", "Gerente", "Coordenador"].includes(currentUserRole);
 
   if (loading) return <div className="min-h-screen flex items-center justify-center bg-background"><Loader2 className="w-6 h-6 animate-spin text-primary" /></div>;
-  if (!product) return <div className="min-h-screen flex items-center justify-center bg-background"><div className="text-center"><p className="text-muted-foreground mb-4">Produto não encontrado.</p><Button onClick={() => navigate("/products")} variant="outline" className="rounded-2xl">Voltar</Button></div></div>;
+  if (!product) return (
+    <div className="min-h-screen flex items-center justify-center bg-background">
+      <div className="text-center"><p className="text-muted-foreground mb-4">Produto não encontrado.</p>
+        <Button onClick={() => navigate("/products")} variant="outline" className="rounded-2xl">Voltar para Produtos</Button>
+      </div>
+    </div>
+  );
 
   return (
     <div className="min-h-screen bg-background pb-28 px-4 pt-6 max-w-2xl mx-auto">
-      {/* Header */}
       <div className="flex items-center gap-3 mb-6">
         <button onClick={() => navigate("/products")} className="w-9 h-9 rounded-2xl bg-surface-low border border-surface-mid flex items-center justify-center hover:bg-surface-mid transition-colors flex-shrink-0">
           <ArrowLeft className="w-4 h-4 text-foreground" />
         </button>
         <div className="flex-1 min-w-0">
           <h1 className="text-xl font-bold text-foreground truncate">{product.name}</h1>
-          {product.description && <p className="text-xs text-muted-foreground truncate">{product.description}</p>}
+          <div className="flex items-center gap-2 mt-0.5">
+            <Badge variant="outline" className={`text-xs rounded-full border capitalize ${product.status === "ativo" ? "border-green-500/30 text-green-400 bg-green-500/10" : product.status === "pausado" ? "border-yellow-500/30 text-yellow-400 bg-yellow-500/10" : "border-surface-high text-muted-foreground"}`}>{product.status}</Badge>
+          </div>
         </div>
-        <Badge variant="outline" className={`text-xs rounded-full border ${product.status === "ativo" ? "border-green-500/30 text-green-400 bg-green-500/10" : "border-surface-high text-muted-foreground"}`}>{product.status}</Badge>
       </div>
 
-      {/* Tarefas */}
-      <DrawerSection id="tasks" icon={ListTodo} title="Tarefas" badge={activeTasks.length} open={openSections.includes("tasks")} onToggle={toggleSection}>
-        {tasks.length === 0 ? (
-          <p className="text-sm text-muted-foreground text-center py-2">Nenhuma tarefa ativa.</p>
-        ) : (
-          <div className="space-y-2">
-            {tasks.map((task) => (
-              <div key={task.id} className="flex items-center gap-3 p-3 rounded-2xl bg-surface-mid hover:bg-surface-high transition-colors group">
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium text-foreground truncate">{task.title}</p>
-                  {task.assignee_name && <p className="text-xs text-muted-foreground">{task.assignee_name}</p>}
+      {product.description && (
+        <div className="bg-surface-low border border-surface-mid rounded-3xl p-5 mb-4">
+          <p className="text-sm text-muted-foreground leading-relaxed">{product.description}</p>
+        </div>
+      )}
+
+      <DrawerSection id="tasks" icon={CheckSquare} title="Tarefas" badge={activeTasks + pendingTasks} open={isOpen("tasks")} onToggle={toggleSection}>
+        <div className="space-y-2 mb-3">
+          {tasks.length === 0 ? <p className="text-sm text-muted-foreground text-center py-2">Nenhuma tarefa cadastrada.</p> : tasks.map((task) => {
+            const s = STATUS_STYLE[task.status] || STATUS_STYLE.PENDENTE;
+            return (
+              <div key={task.id} className={`flex items-center justify-between p-3 bg-surface-mid rounded-2xl ${s.border}`}>
+                <div className="flex-1 min-w-0 pr-2">
+                  <p className="text-sm text-foreground truncate">{task.title}</p>
+                  {task.assigneeName && <p className="text-xs text-muted-foreground mt-0.5">{task.assigneeName}</p>}
                 </div>
-                {task.priority && <Badge variant="outline" className={`text-xs rounded-full border ${STATUS_COLORS[task.status] || ""}`}>{task.status}</Badge>}
-                <button onClick={() => navigate(`/products/${id}/tasks/${task.id}`)} className="w-8 h-8 rounded-xl bg-surface-low hover:bg-primary/20 flex items-center justify-center transition-colors flex-shrink-0" title="Abrir tarefa">
-                  <ExternalLink className="w-3.5 h-3.5 text-primary" />
+                <div className="flex items-center gap-2 flex-shrink-0">
+                  <Badge className={`text-[10px] px-2 py-0.5 border ${s.badge}`}>{s.label}</Badge>
+                  <button onClick={() => navigate(`/products/${id}/tasks/${task.id}`)}
+                    className="w-7 h-7 rounded-xl bg-surface-high hover:bg-primary/20 flex items-center justify-center transition-colors">
+                    <ExternalLink className="w-3.5 h-3.5 text-primary" />
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+        {canEdit && (
+          <div className="flex gap-2 mt-3">
+            <Input value={newTaskTitle} onChange={(e) => setNewTaskTitle(e.target.value)} onKeyDown={(e) => e.key === "Enter" && handleAddTask()}
+              placeholder="Nova tarefa..." className="bg-surface-mid border-surface-high rounded-2xl h-10 text-sm flex-1" />
+            <Button onClick={handleAddTask} disabled={addingTask || !newTaskTitle.trim()} size="sm" className="bg-primary text-background rounded-2xl h-10 px-3">
+              {addingTask ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
+            </Button>
+          </div>
+        )}
+      </DrawerSection>
+
+      <DrawerSection id="files" icon={FolderOpen} title="Arquivos" badge={files.length} open={isOpen("files")} onToggle={toggleSection}>
+        {files.length === 0 ? <p className="text-sm text-muted-foreground text-center py-2">Nenhum arquivo enviado.</p> : (
+          <div className="space-y-2 mb-3">
+            {files.map((f) => {
+              const FileIcon = FILE_ICONS[f.type] || FILE_ICONS.default;
+              return (
+                <div key={f.id} className="flex items-center gap-3 p-3 bg-surface-mid rounded-2xl">
+                  <FileIcon className="w-4 h-4 text-primary flex-shrink-0" />
+                  <div className="flex-1 min-w-0"><p className="text-sm text-foreground truncate">{f.name}</p><p className="text-xs text-muted-foreground">{f.size} · {f.uploadedAt}</p></div>
+                  {f.url && <a href={f.url} target="_blank" rel="noopener noreferrer" className="w-7 h-7 rounded-xl bg-surface-high hover:bg-primary/20 flex items-center justify-center transition-colors"><ExternalLink className="w-3.5 h-3.5 text-primary" /></a>}
+                  {canEdit && <button className="w-7 h-7 rounded-xl hover:bg-red-500/10 flex items-center justify-center transition-colors"><Trash2 className="w-3.5 h-3.5 text-red-400" /></button>}
+                </div>
+              );
+            })}
+          </div>
+        )}
+        {canEdit && (
+          <div className="border-2 border-dashed border-surface-high rounded-2xl p-5 text-center hover:border-primary/50 cursor-pointer transition-colors mt-2">
+            <Upload className="w-5 h-5 text-muted-foreground mx-auto mb-1" /><p className="text-xs text-muted-foreground">Arraste ou clique para enviar</p>
+          </div>
+        )}
+      </DrawerSection>
+
+      <DrawerSection id="documents" icon={FileText} title="Documentos" open={isOpen("documents")} onToggle={toggleSection}>
+        <div className="space-y-3">
+          <div><Label className="text-xs text-muted-foreground uppercase tracking-wide mb-2 block">Briefing do Produto</Label>
+            <Textarea placeholder="Descreva o briefing do produto..." className="bg-surface-mid border-surface-high rounded-2xl min-h-[100px] text-sm" readOnly={!canEdit} /></div>
+          <div><Label className="text-xs text-muted-foreground uppercase tracking-wide mb-2 block">Objetivos</Label>
+            <Textarea placeholder="Liste os objetivos principais..." className="bg-surface-mid border-surface-high rounded-2xl min-h-[80px] text-sm" readOnly={!canEdit} /></div>
+          {canEdit && <Button size="sm" className="bg-primary text-background rounded-2xl w-full gap-2"><Plus className="w-3.5 h-3.5" /> Salvar Documento</Button>}
+        </div>
+      </DrawerSection>
+
+      <DrawerSection id="branding" icon={Palette} title="Identidade Visual" open={isOpen("branding")} onToggle={toggleSection}>
+        <div className="space-y-4">
+          <div><p className="text-xs text-muted-foreground mb-2 font-medium">Logo</p>
+            <div className="border-2 border-dashed border-surface-high rounded-2xl p-6 text-center hover:border-primary/50 cursor-pointer transition-colors">
+              <Upload className="w-5 h-5 text-muted-foreground mx-auto mb-1" /><p className="text-xs text-muted-foreground">Arraste sua logo aqui</p>
+            </div>
+          </div>
+          <div><p className="text-xs text-muted-foreground mb-3 font-medium">Paleta de Cores</p>
+            <div className="grid grid-cols-3 gap-3">
+              {[["Primária", "#91f78e"], ["Secundária", "#2563eb"], ["Accent", "#f59e0b"]].map(([label, color]) => (
+                <div key={label}><p className="text-[10px] text-muted-foreground mb-1">{label}</p>
+                  <div className="flex items-center gap-2 p-2 bg-surface-mid rounded-2xl">
+                    <div className="w-6 h-6 rounded-lg flex-shrink-0" style={{ backgroundColor: color }} />
+                    <span className="text-xs font-mono text-foreground">{color}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </DrawerSection>
+
+      <DrawerSection id="team" icon={Users} title="Equipe do Produto" badge={teamMembers.length} open={isOpen("team")} onToggle={toggleSection}>
+        {teamMembers.length === 0 ? <p className="text-sm text-muted-foreground text-center py-2">Nenhum membro vinculado.</p> : (
+          <div className="space-y-2">
+            {teamMembers.map((m) => (
+              <div key={m.id} className="flex items-center gap-3 p-3 bg-surface-mid rounded-2xl">
+                <div className="w-8 h-8 rounded-full bg-primary/20 flex items-center justify-center font-bold text-primary text-sm flex-shrink-0">
+                  {m.avatarUrl ? <img src={m.avatarUrl} alt={m.name} className="w-8 h-8 rounded-full object-cover" /> : m.name.charAt(0).toUpperCase()}
+                </div>
+                <div className="flex-1 min-w-0"><p className="text-sm font-medium text-foreground truncate">{m.name}</p><p className="text-xs text-muted-foreground">{m.role}</p></div>
+              </div>
+            ))}
+          </div>
+        )}
+      </DrawerSection>
+
+      <DrawerSection id="activity" icon={Activity} title="Atividade Recente" badge={activity.length} open={isOpen("activity")} onToggle={toggleSection}>
+        {activity.length === 0 ? <p className="text-sm text-muted-foreground text-center py-2">Nenhuma atividade registrada.</p> : (
+          <div className="space-y-3">
+            {activity.map((item) => (
+              <div key={item.id} className="flex items-start gap-3 pb-3 border-b border-surface-mid last:border-0">
+                <div className="w-2 h-2 rounded-full bg-primary mt-1.5 flex-shrink-0" />
+                <div className="flex-1 min-w-0"><p className="text-sm text-foreground">{item.action}</p><p className="text-xs text-muted-foreground mt-0.5">{item.userName} · {item.createdAt}</p></div>
+              </div>
+            ))}
+          </div>
+        )}
+      </DrawerSection>
+
+      {canEdit && (
+        <DrawerSection id="settings" icon={Settings} title="Configurações do Produto" open={isOpen("settings")} onToggle={toggleSection}>
+          <div className="space-y-4">
+            <div className="space-y-1.5"><Label className="text-xs text-muted-foreground uppercase tracking-wide">Nome do produto</Label>
+              <Input value={editName} onChange={(e) => setEditName(e.target.value)} className="bg-surface-mid border-surface-high rounded-2xl" /></div>
+            <div className="space-y-1.5"><Label className="text-xs text-muted-foreground uppercase tracking-wide">Descrição</Label>
+              <Textarea value={editDesc} onChange={(e) => setEditDesc(e.target.value)} className="bg-surface-mid border-surface-high rounded-2xl" /></div>
+            <div className="border-t border-surface-mid pt-4 space-y-3">
+              <div className="flex items-center gap-2 mb-1"><QrCode className="w-4 h-4 text-primary" /><p className="text-sm font-semibold text-foreground">Código do Produto</p></div>
+              <p className="text-xs text-muted-foreground">Compartilhe este código para que outras equipes possam solicitar acesso a este produto.</p>
+              <div className="flex items-center gap-2 p-3 bg-surface-mid rounded-2xl">
+                <span className="flex-1 font-mono text-sm text-primary tracking-widest">{product.productCode || "—"}</span>
+                <button onClick={copyCode} className="w-8 h-8 rounded-xl bg-surface-high hover:bg-primary/20 flex items-center justify-center transition-colors flex-shrink-0">
+                  {codeCopied ? <Check className="w-3.5 h-3.5 text-green-400" /> : <Copy className="w-3.5 h-3.5 text-primary" />}
                 </button>
               </div>
-            ))}
-          </div>
-        )}
-        {canManage && (
-          <Button variant="outline" size="sm" className="mt-3 rounded-2xl border-primary/50 text-primary w-full gap-2">
-            <Plus className="w-4 h-4" />Nova Tarefa
-          </Button>
-        )}
-      </DrawerSection>
-
-      {/* Arquivos */}
-      <DrawerSection id="files" icon={Upload} title="Arquivos" badge={files.length} open={openSections.includes("files")} onToggle={toggleSection}>
-        {files.length === 0 ? (
-          <p className="text-sm text-muted-foreground text-center py-2">Nenhum arquivo enviado ainda.</p>
-        ) : (
-          <div className="space-y-2">
-            {files.map((f) => (
-              <div key={f.id} className="flex items-center gap-3 p-3 rounded-2xl bg-surface-mid">
-                <FileText className="w-4 h-4 text-primary flex-shrink-0" />
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm text-foreground truncate">{f.name}</p>
-                  <p className="text-xs text-muted-foreground">{f.uploaded_at}</p>
-                </div>
-                <a href={f.file_url} target="_blank" rel="noopener noreferrer" className="w-8 h-8 rounded-xl bg-surface-low hover:bg-primary/20 flex items-center justify-center transition-colors">
-                  <ExternalLink className="w-3.5 h-3.5 text-primary" />
-                </a>
+              <div className="bg-surface-mid rounded-2xl p-3 text-xs text-muted-foreground space-y-1">
+                <p className="font-semibold text-foreground text-xs">Como funciona:</p>
+                <p>1. Copie o código acima e envie para a equipe desejada.</p>
+                <p>2. A equipe acessa "Novo Produto" e escolhe "Entrar com código".</p>
+                <p>3. Após inserir o código, eles terão acesso de visualização ao produto.</p>
               </div>
-            ))}
-          </div>
-        )}
-        {canManage && (
-          <Button variant="outline" size="sm" className="mt-3 rounded-2xl border-primary/50 text-primary w-full gap-2">
-            <Upload className="w-4 h-4" />Enviar Arquivo
-          </Button>
-        )}
-      </DrawerSection>
-
-      {/* Documentos */}
-      <DrawerSection id="docs" icon={FileText} title="Documentos" open={openSections.includes("docs")} onToggle={toggleSection}>
-        <p className="text-sm text-muted-foreground text-center py-2">Nenhum documento adicionado.</p>
-        {canManage && (
-          <Button variant="outline" size="sm" className="mt-3 rounded-2xl border-primary/50 text-primary w-full gap-2">
-            <Plus className="w-4 h-4" />Novo Documento
-          </Button>
-        )}
-      </DrawerSection>
-
-      {/* Identidade Visual */}
-      <DrawerSection id="brand" icon={Image} title="Identidade Visual" open={openSections.includes("brand")} onToggle={toggleSection}>
-        <p className="text-sm text-muted-foreground text-center py-2">Nenhum ativo de marca adicionado.</p>
-        {canManage && (
-          <Button variant="outline" size="sm" className="mt-3 rounded-2xl border-primary/50 text-primary w-full gap-2">
-            <Upload className="w-4 h-4" />Enviar Ativo
-          </Button>
-        )}
-      </DrawerSection>
-
-      {/* Equipe */}
-      <DrawerSection id="team" icon={Users} title="Equipe do Produto" open={openSections.includes("team")} onToggle={toggleSection}>
-        <p className="text-sm text-muted-foreground text-center py-2">Nenhum membro atribuído diretamente.</p>
-        {canManage && (
-          <Button variant="outline" size="sm" className="mt-3 rounded-2xl border-primary/50 text-primary w-full gap-2">
-            <Plus className="w-4 h-4" />Adicionar Membro
-          </Button>
-        )}
-      </DrawerSection>
-
-      {/* Atividade Recente */}
-      <DrawerSection id="activity" icon={Activity} title="Atividade Recente" badge={activity.length} open={openSections.includes("activity")} onToggle={toggleSection}>
-        {activity.length === 0 ? (
-          <p className="text-sm text-muted-foreground text-center py-2">Nenhuma atividade registrada.</p>
-        ) : (
-          <div className="space-y-3">
-            {activity.map((a) => (
-              <div key={a.id} className="flex gap-3">
-                <div className="w-1.5 h-1.5 rounded-full bg-primary mt-2 flex-shrink-0" />
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm text-foreground">{a.action}</p>
-                  <p className="text-xs text-muted-foreground">{a.user_name && `${a.user_name} · `}{a.created_at}</p>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </DrawerSection>
-
-      {/* Configurações */}
-      {canManage && (
-        <DrawerSection id="settings" icon={Settings} title="Configurações" open={openSections.includes("settings")} onToggle={toggleSection}>
-          <div className="space-y-4">
-            <div className="space-y-1">
-              <Label className="text-xs text-muted-foreground uppercase tracking-wide">Nome do produto</Label>
-              <Input defaultValue={product.name} className="bg-surface-mid border-surface-high rounded-2xl" />
             </div>
-            <div className="space-y-1">
-              <Label className="text-xs text-muted-foreground uppercase tracking-wide">Descrição</Label>
-              <Input defaultValue={product.description || ""} placeholder="Descrição do produto" className="bg-surface-mid border-surface-high rounded-2xl" />
-            </div>
-
-            {/* Código do Produto */}
-            <div className="border-t border-surface-mid pt-4">
-              <p className="text-xs text-muted-foreground uppercase tracking-wide font-semibold mb-2">Código do Produto</p>
-              {product.product_code ? (
-                <div className="space-y-2">
-                  <div className="flex items-center gap-2 bg-surface-mid rounded-2xl p-3">
-                    <code className="flex-1 text-sm font-mono tracking-widest text-primary">{product.product_code}</code>
-                    <button onClick={copyProductCode} className="w-8 h-8 rounded-xl hover:bg-surface-high flex items-center justify-center transition-colors flex-shrink-0">
-                      {codeCopied ? <Check className="w-4 h-4 text-green-400" /> : <Copy className="w-4 h-4 text-muted-foreground" />}
-                    </button>
-                  </div>
-                  <p className="text-xs text-muted-foreground">
-                    Compartilhe este código com outras equipes. Elas podem entrar no produto via "Novo Produto" → "Entrar com código".
-                  </p>
-                </div>
-              ) : (
-                <p className="text-xs text-muted-foreground">Código não gerado.</p>
-              )}
-            </div>
-
-            <div className="border-t border-surface-mid pt-3">
-              <button className="w-full py-2.5 text-sm text-red-400 border border-red-500/30 rounded-2xl hover:bg-red-500/10 transition-colors">
-                Arquivar Produto
-              </button>
-            </div>
+            <Button onClick={handleSaveEdit} disabled={savingEdit || !editName.trim()} className="flex-1 w-full bg-primary text-background rounded-2xl font-semibold">
+              {savingEdit ? <Loader2 className="w-4 h-4 animate-spin" /> : "Salvar Alterações"}
+            </Button>
           </div>
         </DrawerSection>
       )}
