@@ -3,7 +3,7 @@ import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { onAuthStateChanged } from "firebase/auth";
 import { doc, getDoc } from "firebase/firestore";
 import type { User } from "firebase/auth";
-import { auth, db } from "@/integrations/firebase/client";
+import { auth, db, firebaseConfigured } from "@/integrations/firebase/client";
 
 // ── Lazy pages ──────────────────────────────────────────────────────────────
 const LoadingPage   = lazy(() => import("@/components/LoadingPage"));
@@ -28,19 +28,26 @@ interface ProfileState {
 
 const App = () => {
   // undefined = initial load, null = not logged in, User = logged in
-  const [user, setUser] = useState<User | null | undefined>(undefined);
-  const [profile, setProfile] = useState<ProfileState>({ complete: false, loading: true });
+  const [user, setUser] = useState<User | null | undefined>(firebaseConfigured ? undefined : null);
+  const [profile, setProfile] = useState<ProfileState>({ complete: false, loading: firebaseConfigured });
 
   useEffect(() => {
+    if (!firebaseConfigured) {
+      return;
+    }
+
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
       setUser(firebaseUser);
 
       if (firebaseUser) {
-        // Check if profile is complete in Firestore
-        const profileDoc = await getDoc(doc(db, "profiles", firebaseUser.uid));
-        const data = profileDoc.data();
-        const complete = !!(data?.name && data?.role && data?.cargoCode);
-        setProfile({ complete, loading: false });
+        try {
+          const profileDoc = await getDoc(doc(db, "profiles", firebaseUser.uid));
+          const data = profileDoc.data();
+          const complete = !!(data?.name && data?.role && data?.cargoCode);
+          setProfile({ complete, loading: false });
+        } catch {
+          setProfile({ complete: false, loading: false });
+        }
       } else {
         setProfile({ complete: false, loading: false });
       }
