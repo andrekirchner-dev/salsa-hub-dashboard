@@ -97,33 +97,50 @@ export default function Team() {
   }, [selectedTeamId]);
 
   const loadTeamDetails = useCallback(async (teamId: string) => {
-    const membersSnap = await getDocs(collection(db, "teams", teamId, "members"));
-    const membersData: TeamMember[] = [];
-    for (const d of membersSnap.docs) {
-      const mData = d.data();
-      const userId = mData.userId || d.id;
-      const profileSnap = await getDoc(doc(db, "profiles", userId));
-      const pData = profileSnap.data();
-      membersData.push({ id: userId, name: pData?.name || "—", email: pData?.email || "—",
-        role: mData.role || pData?.role || "—", avatarUrl: pData?.avatarUrl });
-    }
-    setMembers(membersData);
-    const productsSnap = await getDocs(query(collection(db, "products"), where("teamId", "==", teamId), orderBy("name")));
-    setProjects(productsSnap.docs.map((d) => ({ id: d.id, name: d.data().name, status: d.data().status || "ativo" })));
-    const tasksSnap = await getDocs(query(collection(db, "tasks"),
-      where("teamId", "==", teamId), where("status", "!=", "COMPLETA"),
-      orderBy("status"), orderBy("createdAt", "desc"), limit(20)));
-    const tasksData: TeamTask[] = [];
-    for (const d of tasksSnap.docs) {
-      const tData = d.data();
-      let assigneeName = "—";
-      if (tData.assignedTo) {
-        const assigneeSnap = await getDoc(doc(db, "profiles", tData.assignedTo));
-        assigneeName = assigneeSnap.data()?.name || "—";
+    try {
+      const membersSnap = await getDocs(collection(db, "teams", teamId, "members"));
+      const membersData: TeamMember[] = [];
+      for (const d of membersSnap.docs) {
+        const mData = d.data();
+        const userId = mData.userId || d.id;
+        const profileSnap = await getDoc(doc(db, "profiles", userId));
+        const pData = profileSnap.data();
+        membersData.push({ id: userId, name: pData?.name || "—", email: pData?.email || "—",
+          role: mData.role || pData?.role || "—", avatarUrl: pData?.avatarUrl });
       }
-      tasksData.push({ id: d.id, title: tData.title, status: tData.status, assigneeName });
+      setMembers(membersData);
+    } catch (e) {
+      console.warn("Failed to load team members:", e);
+      setMembers([]);
     }
-    setTasks(tasksData);
+
+    try {
+      const productsSnap = await getDocs(query(collection(db, "products"), where("teamId", "==", teamId), orderBy("name")));
+      setProjects(productsSnap.docs.map((d) => ({ id: d.id, name: d.data().name, status: d.data().status || "ativo" })));
+    } catch (e) {
+      console.warn("Failed to load team projects:", e);
+      setProjects([]);
+    }
+
+    try {
+      const tasksSnap = await getDocs(query(collection(db, "tasks"),
+        where("teamId", "==", teamId), where("status", "!=", "COMPLETA"),
+        orderBy("status"), orderBy("createdAt", "desc"), limit(20)));
+      const tasksData: TeamTask[] = [];
+      for (const d of tasksSnap.docs) {
+        const tData = d.data();
+        let assigneeName = "—";
+        if (tData.assignedTo) {
+          const assigneeSnap = await getDoc(doc(db, "profiles", tData.assignedTo));
+          assigneeName = assigneeSnap.data()?.name || "—";
+        }
+        tasksData.push({ id: d.id, title: tData.title, status: tData.status, assigneeName });
+      }
+      setTasks(tasksData);
+    } catch (e) {
+      console.warn("Failed to load team tasks (missing Firestore index?):", e);
+      setTasks([]);
+    }
   }, []);
 
   useEffect(() => { loadTeams(); }, [loadTeams]);

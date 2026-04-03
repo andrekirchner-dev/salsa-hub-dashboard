@@ -61,53 +61,72 @@ export default function Index() {
     const user = getAuth().currentUser;
     if (!user) return;
 
-    const profileSnap = await getDocs(
-      query(collection(db, "profiles"), where("__name__", "==", user.uid))
-    );
-    if (!profileSnap.empty) {
-      const name: string = profileSnap.docs[0].data().name || "";
-      setUserName(name.split(" ")[0]);
+    try {
+      const profileSnap = await getDocs(
+        query(collection(db, "profiles"), where("__name__", "==", user.uid))
+      );
+      if (!profileSnap.empty) {
+        const name: string = profileSnap.docs[0].data().name || "";
+        setUserName(name.split(" ")[0]);
+      }
+    } catch (e) {
+      console.warn("Failed to load profile:", e);
     }
 
     setLoadingTasks(true);
-    const tasksSnap = await getDocs(
-      query(
-        collection(db, "tasks"),
-        where("assignedTo", "==", user.uid),
-        where("status", "!=", "COMPLETA"),
-        orderBy("status"),
-        orderBy("createdAt", "desc"),
-        limit(20)
-      )
-    );
-    setTasks(
-      tasksSnap.docs.map((d) => ({
-        id: d.id,
-        label: d.data().title,
-        priority: d.data().priority || "Media",
-        done: d.data().status === "COMPLETA",
-      }))
-    );
+    try {
+      const tasksSnap = await getDocs(
+        query(
+          collection(db, "tasks"),
+          where("assignedTo", "==", user.uid),
+          where("status", "!=", "COMPLETA"),
+          orderBy("status"),
+          orderBy("createdAt", "desc"),
+          limit(20)
+        )
+      );
+      setTasks(
+        tasksSnap.docs.map((d) => ({
+          id: d.id,
+          label: d.data().title,
+          priority: d.data().priority || "Media",
+          done: d.data().status === "COMPLETA",
+        }))
+      );
+    } catch (e) {
+      console.warn("Failed to load tasks (missing Firestore index?):", e);
+      setTasks([]);
+    }
     setLoadingTasks(false);
 
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const tomorrow = new Date(today);
-    tomorrow.setDate(today.getDate() + 1);
+    try {
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const tomorrow = new Date(today);
+      tomorrow.setDate(today.getDate() + 1);
 
-    const [campaigns, meetings, products, members] = await Promise.all([
-      getCountFromServer(query(collection(db, "marketingCampaigns"), where("status", "==", "ativa"))),
-      getCountFromServer(query(collection(db, "calendarEvents"), where("startTime", ">=", today), where("startTime", "<", tomorrow))),
-      getCountFromServer(query(collection(db, "products"), where("status", "==", "ativo"))),
-      getCountFromServer(collection(db, "profiles")),
-    ]);
+      const [campaigns, meetings, products, members] = await Promise.all([
+        getCountFromServer(query(collection(db, "marketingCampaigns"), where("status", "==", "ativa"))),
+        getCountFromServer(query(collection(db, "calendarEvents"), where("startTime", ">=", today), where("startTime", "<", tomorrow))),
+        getCountFromServer(query(collection(db, "products"), where("status", "==", "ativo"))),
+        getCountFromServer(collection(db, "profiles")),
+      ]);
 
-    setStats([
-      { label: "Campanhas Ativas",  value: String(campaigns.data().count),  icon: TrendingUp, color: "text-primary",     bg: "bg-primary/10",    route: "/marketing" },
-      { label: "Reuniões Hoje",     value: String(meetings.data().count),   icon: Calendar,   color: "text-blue-400",   bg: "bg-blue-500/10",   route: "/calendar"  },
-      { label: "Produtos Ativos",   value: String(products.data().count),   icon: Package,    color: "text-purple-400", bg: "bg-purple-500/10", route: "/products"  },
-      { label: "Membros da Equipe", value: String(members.data().count),    icon: Users,      color: "text-orange-400", bg: "bg-orange-500/10", route: "/team"      },
-    ]);
+      setStats([
+        { label: "Campanhas Ativas",  value: String(campaigns.data().count),  icon: TrendingUp, color: "text-primary",     bg: "bg-primary/10",    route: "/marketing" },
+        { label: "Reuniões Hoje",     value: String(meetings.data().count),   icon: Calendar,   color: "text-blue-400",   bg: "bg-blue-500/10",   route: "/calendar"  },
+        { label: "Produtos Ativos",   value: String(products.data().count),   icon: Package,    color: "text-purple-400", bg: "bg-purple-500/10", route: "/products"  },
+        { label: "Membros da Equipe", value: String(members.data().count),    icon: Users,      color: "text-orange-400", bg: "bg-orange-500/10", route: "/team"      },
+      ]);
+    } catch (e) {
+      console.warn("Failed to load stats:", e);
+      setStats([
+        { label: "Campanhas Ativas",  value: "—", icon: TrendingUp, color: "text-primary",     bg: "bg-primary/10",    route: "/marketing" },
+        { label: "Reuniões Hoje",     value: "—", icon: Calendar,   color: "text-blue-400",   bg: "bg-blue-500/10",   route: "/calendar"  },
+        { label: "Produtos Ativos",   value: "—", icon: Package,    color: "text-purple-400", bg: "bg-purple-500/10", route: "/products"  },
+        { label: "Membros da Equipe", value: "—", icon: Users,      color: "text-orange-400", bg: "bg-orange-500/10", route: "/team"      },
+      ]);
+    }
   }, []);
 
   useEffect(() => { loadData(); }, [loadData]);

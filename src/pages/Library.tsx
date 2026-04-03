@@ -37,18 +37,23 @@ export default function Library() {
 
   const loadTools = useCallback(async () => {
     setLoading(true);
-    const snap = await getDocs(query(collection(db, "toolsLibrary"), where("validated", "==", true), orderBy("name")));
-    const toolsData: Tool[] = [];
-    for (const d of snap.docs) {
-      const data = d.data();
-      let addedByName = "—";
-      if (data.addedBy) {
-        const profileSnap = await getDoc(doc(db, "profiles", data.addedBy));
-        addedByName = profileSnap.data()?.name || "—";
+    try {
+      const snap = await getDocs(query(collection(db, "toolsLibrary"), where("validated", "==", true), orderBy("name")));
+      const toolsData: Tool[] = [];
+      for (const d of snap.docs) {
+        const data = d.data();
+        let addedByName = "—";
+        if (data.addedBy) {
+          const profileSnap = await getDoc(doc(db, "profiles", data.addedBy));
+          addedByName = profileSnap.data()?.name || "—";
+        }
+        toolsData.push({ id: d.id, name: data.name, toolFunction: data.toolFunction || data.function || "", type: data.type, url: data.url, addedByName });
       }
-      toolsData.push({ id: d.id, name: data.name, toolFunction: data.toolFunction || data.function || "", type: data.type, url: data.url, addedByName });
+      setTools(toolsData);
+    } catch (e) {
+      console.warn("Failed to load tools (missing Firestore index?):", e);
+      setTools([]);
     }
-    setTools(toolsData);
     setLoading(false);
   }, []);
 
