@@ -18,6 +18,10 @@ const Team          = lazy(() => import("@/pages/Team"));
 const Library       = lazy(() => import("@/pages/Library"));
 const Marketing     = lazy(() => import("@/pages/Marketing"));
 const Calendar      = lazy(() => import("@/pages/Calendar"));
+const Chat          = lazy(() => import("@/pages/Chat"));
+const Profile       = lazy(() => import("@/pages/Profile"));
+const Notifications = lazy(() => import("@/pages/Notifications"));
+const AdminPanel    = lazy(() => import("@/pages/AdminPanel"));
 const NotFound      = lazy(() => import("@/pages/NotFound"));
 
 // ── Profile state ────────────────────────────────────────────────────────────
