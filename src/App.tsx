@@ -6,10 +6,10 @@ import type { User } from "firebase/auth";
 import { auth, db } from "@/integrations/firebase/client";
 
 // ── Lazy pages ──────────────────────────────────────────────────────────────
-const LoadingPage   = lazy(() => import("@/pages/Loading"));
+const LoadingPage   = lazy(() => import("@/components/LoadingPage"));
 const Auth          = lazy(() => import("@/pages/Auth"));
 const SetupProfile  = lazy(() => import("@/pages/SetupProfile"));
-const Layout        = lazy(() => import("@/components/Layout"));
+const Layout        = lazy(() => import("@/components/layout/AppLayout").then(m => ({ default: m.AppLayout })));
 const Index         = lazy(() => import("@/pages/Index"));
 const Products      = lazy(() => import("@/pages/Products"));
 const ProductDetail = lazy(() => import("@/pages/ProductDetail"));
