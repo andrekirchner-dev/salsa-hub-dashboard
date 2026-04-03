@@ -44,8 +44,10 @@ service cloud.firestore {
       allow read:   if isAuthenticated();
       allow create: if isAuthenticated() && isCLevel();
       allow update: if isAuthenticated()
-        && request.resource.data.keys().hasOnly(['used', 'usedBy', 'usedAt'])
-        && request.resource.data.used == true;
+        && resource.data.used != true
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['used', 'usedBy', 'usedAt'])
+        && request.resource.data.used == true
+        && request.resource.data.usedBy == request.auth.uid;
       allow delete: if isAuthenticated() && isCLevel();
     }
 
