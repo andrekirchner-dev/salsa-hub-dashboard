@@ -80,15 +80,19 @@ export default function Team() {
     const user = getAuth().currentUser;
     if (!user) { setLoading(false); return; }
     setCurrentUserId(user.uid);
-    const profileSnap = await getDoc(doc(db, "profiles", user.uid));
-    setCurrentUserRole(profileSnap.data()?.role || "");
-    const teamsSnap = await getDocs(query(collection(db, "teams"), orderBy("name")));
-    const formatted: Team[] = teamsSnap.docs.map((d) => ({
-      id: d.id, name: d.data().name, description: d.data().description,
-      avatar: d.data().name.charAt(0).toUpperCase(),
-    }));
-    setTeams(formatted);
-    if (!selectedTeamId && formatted.length > 0) setSelectedTeamId(formatted[0].id);
+    try {
+      const profileSnap = await getDoc(doc(db, "profiles", user.uid));
+      setCurrentUserRole(profileSnap.data()?.role || "");
+      const teamsSnap = await getDocs(query(collection(db, "teams"), orderBy("name")));
+      const formatted: Team[] = teamsSnap.docs.map((d) => ({
+        id: d.id, name: d.data().name, description: d.data().description,
+        avatar: d.data().name.charAt(0).toUpperCase(),
+      }));
+      setTeams(formatted);
+      if (!selectedTeamId && formatted.length > 0) setSelectedTeamId(formatted[0].id);
+    } catch (e) {
+      console.warn("Failed to load teams:", e);
+    }
     setLoading(false);
   }, [selectedTeamId]);
 
