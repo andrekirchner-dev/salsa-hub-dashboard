@@ -2,25 +2,16 @@ import { initializeApp, getApps } from "firebase/app";
 import { getAuth, GoogleAuthProvider } from "firebase/auth";
 import { getFirestore, enableIndexedDbPersistence } from "firebase/firestore";
 
-const rawFirebaseConfig = {
-  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
-  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
-  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
-  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
-  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
-  appId: import.meta.env.VITE_FIREBASE_APP_ID,
-};
-
-export const firebaseConfigured = Object.values(rawFirebaseConfig).every(Boolean);
-
 const firebaseConfig = {
-  apiKey: rawFirebaseConfig.apiKey ?? "preview-api-key",
-  authDomain: rawFirebaseConfig.authDomain ?? "preview.firebaseapp.com",
-  projectId: rawFirebaseConfig.projectId ?? "preview-project",
-  storageBucket: rawFirebaseConfig.storageBucket ?? "preview.appspot.com",
-  messagingSenderId: rawFirebaseConfig.messagingSenderId ?? "000000000000",
-  appId: rawFirebaseConfig.appId ?? "1:000000000000:web:preview",
+  apiKey: "AIzaSyCKYXYOaU0O9osz_ZgcAnDUpjmWbICwlF8",
+  authDomain: "salsa-hub-dashboard-db6b6.firebaseapp.com",
+  projectId: "salsa-hub-dashboard-db6b6",
+  storageBucket: "salsa-hub-dashboard-db6b6.firebasestorage.app",
+  messagingSenderId: "1011069420224",
+  appId: "1:1011069420224:web:ce5be3eb3355826f23e325",
 };
+
+export const firebaseConfigured = true;
 
 // Prevent re-initialization during HMR
 const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0];
