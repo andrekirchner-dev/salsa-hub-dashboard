@@ -15,7 +15,7 @@ import { db } from "@/integrations/firebase/client";
 
 interface Tool { id: string; name: string; toolFunction: string; type: string; url: string; addedByName?: string; }
 
-const TOOL_TYPES = ["App", "Site", "IA", "Extensão", "API", "Plugin", "Outro"];
+const TOOL_TYPES = ["App", "Site", "IA", "Extensao", "API", "Plugin", "Outro"];
 const LIBRARY_ADMIN_ROLES = ["CEO", "CFO", "CMO", "COO", "Diretor", "Coordenador"];
 
 export default function Library() {
@@ -37,19 +37,24 @@ export default function Library() {
 
   const loadTools = useCallback(async () => {
     setLoading(true);
-    const snap = await getDocs(query(collection(db, "toolsLibrary"), where("validated", "==", true), orderBy("name")));
-    const toolsData: Tool[] = [];
-    for (const d of snap.docs) {
-      const data = d.data();
-      let addedByName = "—";
-      if (data.addedBy) {
-        const profileSnap = await getDoc(doc(db, "profiles", data.addedBy));
-        addedByName = profileSnap.data()?.name || "—";
+    try {
+      const snap = await getDocs(query(collection(db, "toolsLibrary"), where("validated", "==", true), orderBy("name")));
+      const toolsData: Tool[] = [];
+      for (const d of snap.docs) {
+        const data = d.data();
+        let addedByName = "—";
+        if (data.addedBy) {
+          const profileSnap = await getDoc(doc(db, "profiles", data.addedBy));
+          addedByName = profileSnap.data()?.name || "—";
+        }
+        toolsData.push({ id: d.id, name: data.name, toolFunction: data.toolFunction || data.function || "", type: data.type, url: data.url, addedByName });
       }
-      toolsData.push({ id: d.id, name: data.name, toolFunction: data.toolFunction || data.function || "", type: data.type, url: data.url, addedByName });
+      setTools(toolsData);
+    } catch (err) {
+      console.error("[Library] loadTools error:", err);
+    } finally {
+      setLoading(false);
     }
-    setTools(toolsData);
-    setLoading(false);
   }, []);
 
   useEffect(() => {
@@ -108,7 +113,7 @@ export default function Library() {
                   <Input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="Ex: Figma, ChatGPT..." className="bg-surface-mid border-surface-high rounded-2xl" />
                 </div>
                 <div className="space-y-1">
-                  <Label className="text-xs text-muted-foreground uppercase tracking-wide">Função</Label>
+                  <Label className="text-xs text-muted-foreground uppercase tracking-wide">Funcao</Label>
                   <Input value={newFunction} onChange={(e) => setNewFunction(e.target.value)} placeholder="Ex: Design de interfaces" className="bg-surface-mid border-surface-high rounded-2xl" />
                 </div>
                 <div className="space-y-1">
@@ -155,7 +160,7 @@ export default function Library() {
         ) : (
           <div className="overflow-hidden">
             <div className="grid grid-cols-[1fr_1fr_auto_auto] gap-0 bg-surface-mid px-4 py-2.5 text-xs text-muted-foreground font-semibold uppercase tracking-wide">
-              <span>Nome</span><span>Função</span><span className="text-center">Tipo</span><span className="text-center">Link</span>
+              <span>Nome</span><span>Funcao</span><span className="text-center">Tipo</span><span className="text-center">Link</span>
             </div>
             {filtered.map((tool, i) => (
               <div key={tool.id}
