@@ -1,12 +1,16 @@
 import { useState } from "react";
 import { signInWithPopup } from "firebase/auth";
-import { auth, googleProvider } from "@/integrations/firebase/client";
+import { auth, firebaseConfigured, googleProvider } from "@/integrations/firebase/client";
 
 export default function Auth() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const handleGoogleSignIn = async () => {
+    if (!firebaseConfigured) {
+      return;
+    }
+
     setLoading(true);
     setError(null);
     try {
@@ -37,15 +41,21 @@ export default function Auth() {
 
         {/* Login card */}
         <div className="bg-surface-low border border-surface-mid rounded-3xl p-6 space-y-4">
+          {!firebaseConfigured && (
+            <div className="rounded-2xl border border-border bg-muted/50 p-3 text-center text-sm text-muted-foreground">
+              Configure as variáveis do Firebase para habilitar o login nesta prévia.
+            </div>
+          )}
+
           {error && (
-            <div className="bg-red-500/10 border border-red-500/30 rounded-2xl p-3 text-sm text-red-400 text-center">
+            <div className="rounded-2xl border border-destructive/30 bg-destructive/10 p-3 text-center text-sm text-destructive">
               {error}
             </div>
           )}
 
           <button
             onClick={handleGoogleSignIn}
-            disabled={loading}
+            disabled={loading || !firebaseConfigured}
             className="w-full flex items-center justify-center gap-3 bg-surface-mid hover:bg-surface-high border border-surface-high rounded-2xl h-12 font-semibold text-foreground transition-colors disabled:opacity-60"
           >
             {loading ? (
@@ -58,7 +68,7 @@ export default function Auth() {
                 <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/>
               </svg>
             )}
-            {loading ? "Entrando..." : "Entrar com Google"}
+            {!firebaseConfigured ? "Login indisponível" : loading ? "Entrando..." : "Entrar com Google"}
           </button>
 
           <p className="text-xs text-muted-foreground text-center">
