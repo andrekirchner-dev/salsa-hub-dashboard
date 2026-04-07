@@ -1,12 +1,26 @@
 import { useState, useEffect, useRef } from "react";
-import { ArrowLeft, Plus, Search, Send, Paperclip, MessageCircle } from "lucide-react";
+import {
+  ArrowLeft, Plus, Search, Send, Paperclip, MessageCircle,
+  FileText, Loader2, Download,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { auth, db } from "@/integrations/firebase/client";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { auth, db, storage } from "@/integrations/firebase/client";
 import {
   collection, onSnapshot, addDoc, serverTimestamp, query,
-  orderBy, doc, setDoc, getDoc,
+  orderBy, doc, setDoc, getDocs, where,
 } from "firebase/firestore";
+import { ref, uploadBytesResumable, getDownloadURL } from "firebase/storage";
+
+// ── Interfaces ────────────────────────────────────────────────────────────────
+
+interface UserProfile {
+  uid: string;
+  name: string;
+  email: string;
+  role: string;
+}
 
 interface Conversation {
   id: string;
@@ -15,8 +29,9 @@ interface Conversation {
   updatedAt: any;
   unread: number;
   avatar: string;
-  type: "geral" | "equipe";
+  type: "direto" | "geral" | "equipe";
   participantUids: string[];
+  participantNames?: Record<string, string>;
 }
 
 interface Message {
@@ -25,7 +40,13 @@ interface Message {
   authorName: string;
   authorUid: string;
   createdAt: any;
+  fileUrl?: string;
+  fileName?: string;
+  fileSize?: number;
+  fileType?: "image" | "file";
 }
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
 
 function timeLabel(ts: any): string {
   if (!ts) return "";
@@ -36,6 +57,29 @@ function timeLabel(ts: any): string {
   return date.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" });
 }
 
+function formatFileSize(bytes: number): string {
+  if (bytes < 1024) return bytes + " B";
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + " KB";
+  return (bytes / (1024 * 1024)).toFixed(1) + " MB";
+}
+
+function isImageFile(fileName: string, mimeType?: string): boolean {
+  const imageTypes = ["image/jpeg", "image/jpg", "image/png", "image/gif", "image/webp", "image/svg+xml"];
+  if (mimeType && imageTypes.includes(mimeType)) return true;
+  const ext = fileName.split(".").pop()?.toLowerCase() ?? "";
+  return ["jpg", "jpeg", "png", "gif", "webp", "svg"].includes(ext);
+}
+
+function getConvDisplayName(conv: Conversation, myUid: string): string {
+  if (conv.type === "direto" && conv.participantNames) {
+    const other = Object.entries(conv.participantNames).find(([uid]) => uid !== myUid);
+    return other ? other[1] : conv.name;
+  }
+  return conv.name;
+}
+
+// ── Component ─────────────────────────────────────────────────────────────────
+
 export default function Chat() {
   const currentUser = auth.currentUser!;
   const uid = currentUser.uid;
@@ -44,17 +88,26 @@ export default function Chat() {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [activeConv, setActiveConv] = useState<Conversation | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
-  const [filter, setFilter] = useState<"todos" | "geral" | "equipe">("todos");
-  const [message, setMessage] = useState("");
+  const [filter, setFilter] = useState<"todos" | "direto" | "geral" | "equipe">("todos");
   const [search, setSearch] = useState("");
+  const [message, setMessage] = useState("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Upload state
+  const [uploadProgress, setUploadProgress] = useState<number | null>(null);
+  const [uploadFileName, setUploadFileName] = useState("");
+
+  // Nova Conversa modal
+  const [newConvOpen, setNewConvOpen] = useState(false);
+  const [userSearch, setUserSearch] = useState("");
+  const [allUsers, setAllUsers] = useState<UserProfile[]>([]);
+  const [loadingUsers, setLoadingUsers] = useState(false);
+  const [creatingConv, setCreatingConv] = useState(false);
 
   // Load conversations
   useEffect(() => {
-    const q = query(
-      collection(db, "conversations"),
-      orderBy("updatedAt", "desc")
-    );
+    const q = query(collection(db, "conversations"), orderBy("updatedAt", "desc"));
     const unsub = onSnapshot(q, (snap) => {
       const all = snap.docs
         .map(d => ({ id: d.id, ...d.data() } as Conversation))
@@ -67,7 +120,10 @@ export default function Chat() {
   // Load messages for active conversation
   useEffect(() => {
     if (!activeConv) { setMessages([]); return; }
-    const q = query(collection(db, "conversations", activeConv.id, "messages"), orderBy("createdAt", "asc"));
+    const q = query(
+      collection(db, "conversations", activeConv.id, "messages"),
+      orderBy("createdAt", "asc"),
+    );
     const unsub = onSnapshot(q, (snap) => {
       setMessages(snap.docs.map(d => ({ id: d.id, ...d.data() } as Message)));
       setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }), 100);
@@ -75,43 +131,146 @@ export default function Chat() {
     return unsub;
   }, [activeConv?.id]);
 
+  // Load users when Nova Conversa opens
+  useEffect(() => {
+    if (!newConvOpen) return;
+    setLoadingUsers(true);
+    getDocs(collection(db, "profiles")).then((snap) => {
+      setAllUsers(
+        snap.docs
+          .filter(d => d.id !== uid)
+          .map(d => ({ uid: d.id, ...d.data() } as UserProfile))
+      );
+      setLoadingUsers(false);
+    }).catch(() => setLoadingUsers(false));
+  }, [newConvOpen, uid]);
+
+  // Send text message
   const handleSend = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!message.trim() || !activeConv) return;
     const text = message.trim();
     setMessage("");
     await addDoc(collection(db, "conversations", activeConv.id, "messages"), {
-      text,
-      authorName: userName,
-      authorUid: uid,
-      createdAt: serverTimestamp(),
+      text, authorName: userName, authorUid: uid, createdAt: serverTimestamp(),
     });
     await setDoc(doc(db, "conversations", activeConv.id), {
-      lastMessage: text,
-      updatedAt: serverTimestamp(),
+      lastMessage: text, updatedAt: serverTimestamp(),
     }, { merge: true });
   };
 
-  const filtered = conversations.filter(c => {
-    const matchesSearch = c.name.toLowerCase().includes(search.toLowerCase());
-    const matchesFilter = filter === "todos" || c.type === filter;
-    return matchesSearch && matchesFilter;
+  // Upload file to Firebase Storage
+  const handleFileUpload = async (files: FileList | null) => {
+    if (!files || files.length === 0 || !activeConv) return;
+    const file = files[0];
+    const sanitizedName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
+    const storageRef = ref(storage, `chat/${activeConv.id}/${Date.now()}_${sanitizedName}`);
+
+    setUploadFileName(file.name);
+    setUploadProgress(0);
+
+    const task = uploadBytesResumable(storageRef, file, { contentType: file.type });
+    task.on(
+      "state_changed",
+      (snap) => setUploadProgress(Math.round((snap.bytesTransferred / snap.totalBytes) * 100)),
+      () => { setUploadProgress(null); setUploadFileName(""); },
+      async () => {
+        const fileUrl = await getDownloadURL(task.snapshot.ref);
+        const fileIsImage = isImageFile(file.name, file.type);
+        await addDoc(collection(db, "conversations", activeConv.id, "messages"), {
+          text: "", authorName: userName, authorUid: uid, createdAt: serverTimestamp(),
+          fileUrl, fileName: file.name, fileSize: file.size,
+          fileType: fileIsImage ? "image" : "file",
+        });
+        await setDoc(doc(db, "conversations", activeConv.id), {
+          lastMessage: fileIsImage ? "📷 Imagem" : `📎 ${file.name}`,
+          updatedAt: serverTimestamp(),
+        }, { merge: true });
+        setUploadProgress(null);
+        setUploadFileName("");
+        if (fileInputRef.current) fileInputRef.current.value = "";
+      },
+    );
+  };
+
+  // Start or open 1:1 conversation
+  const handleStartConversation = async (targetUser: UserProfile) => {
+    setCreatingConv(true);
+    // Check for existing 1:1 conversation
+    const snap = await getDocs(query(
+      collection(db, "conversations"),
+      where("participantUids", "array-contains", uid),
+    ));
+    const existing = snap.docs.find(d => {
+      const parts = (d.data().participantUids ?? []) as string[];
+      return parts.length === 2 && parts.includes(targetUser.uid);
+    });
+
+    if (existing) {
+      setActiveConv({ id: existing.id, ...existing.data() } as Conversation);
+    } else {
+      const docRef = await addDoc(collection(db, "conversations"), {
+        type: "direto",
+        participantUids: [uid, targetUser.uid],
+        participantNames: { [uid]: userName, [targetUser.uid]: targetUser.name },
+        name: targetUser.name,
+        avatar: targetUser.name.charAt(0).toUpperCase(),
+        lastMessage: "",
+        updatedAt: serverTimestamp(),
+        createdAt: serverTimestamp(),
+        unread: 0,
+      });
+      setActiveConv({
+        id: docRef.id, type: "direto",
+        participantUids: [uid, targetUser.uid],
+        participantNames: { [uid]: userName, [targetUser.uid]: targetUser.name },
+        name: targetUser.name,
+        avatar: targetUser.name.charAt(0).toUpperCase(),
+        lastMessage: "", updatedAt: null, unread: 0,
+      });
+    }
+    setNewConvOpen(false);
+    setUserSearch("");
+    setCreatingConv(false);
+  };
+
+  const filteredConvs = conversations.filter(c => {
+    const name = getConvDisplayName(c, uid);
+    const matchSearch = name.toLowerCase().includes(search.toLowerCase());
+    const matchFilter =
+      filter === "todos" || c.type === filter ||
+      (filter === "direto" && c.type === "direto");
+    return matchSearch && matchFilter;
   });
 
+  const filteredUsers = allUsers.filter(u =>
+    u.name?.toLowerCase().includes(userSearch.toLowerCase()) ||
+    u.email?.toLowerCase().includes(userSearch.toLowerCase())
+  );
+
+  // ── Active conversation view ───────────────────────────────────────────────
   if (activeConv) {
+    const displayName = getConvDisplayName(activeConv, uid);
+
     return (
       <div className="min-h-screen bg-background flex flex-col">
+        {/* Header */}
         <div className="h-14 flex items-center gap-3 px-4 bg-surface-low border-b border-surface-mid flex-shrink-0">
           <button onClick={() => setActiveConv(null)} className="p-2 rounded-xl hover:bg-surface-mid transition-colors">
             <ArrowLeft className="w-5 h-5 text-foreground" />
           </button>
           <div className="w-8 h-8 rounded-full bg-primary/20 text-primary flex items-center justify-center text-xs font-bold">
-            {activeConv.avatar}
+            {displayName.charAt(0).toUpperCase()}
           </div>
           <div className="flex-1 min-w-0">
-            <p className="font-semibold text-foreground text-sm truncate">{activeConv.name}</p>
+            <p className="font-semibold text-foreground text-sm truncate">{displayName}</p>
+            {activeConv.type === "direto" && (
+              <p className="text-[10px] text-muted-foreground">Conversa direta</p>
+            )}
           </div>
         </div>
+
+        {/* Messages */}
         <div className="flex-1 overflow-y-auto p-4 space-y-3">
           {messages.length === 0 && (
             <div className="text-center py-12 text-muted-foreground">
@@ -123,24 +282,73 @@ export default function Chat() {
             const isOwn = msg.authorUid === uid;
             return (
               <div key={msg.id} className={"flex " + (isOwn ? "justify-end" : "justify-start")}>
-                <div className={"max-w-[75%] px-4 py-3 rounded-2xl " + (isOwn ? "bg-primary text-background" : "bg-surface-mid text-foreground")}>
-                  {!isOwn && <p className="text-xs font-medium opacity-75 mb-1">{msg.authorName}</p>}
-                  <p className="text-sm">{msg.text}</p>
-                  <p className="text-xs opacity-60 mt-1 text-right">{timeLabel(msg.createdAt)}</p>
+                <div className={"max-w-[78%] rounded-2xl overflow-hidden " + (isOwn ? "bg-primary text-background" : "bg-surface-mid text-foreground")}>
+
+                  {/* Image */}
+                  {msg.fileType === "image" && msg.fileUrl && (
+                    <a href={msg.fileUrl} target="_blank" rel="noopener noreferrer">
+                      <img src={msg.fileUrl} alt={msg.fileName ?? "imagem"} className="max-w-full max-h-64 object-cover" />
+                    </a>
+                  )}
+
+                  {/* File attachment */}
+                  {msg.fileType === "file" && msg.fileUrl && (
+                    <a href={msg.fileUrl} target="_blank" rel="noopener noreferrer"
+                      className={"flex items-center gap-3 px-4 py-3 hover:opacity-80 transition-opacity " + (isOwn ? "text-background" : "text-foreground")}>
+                      <FileText className="w-8 h-8 flex-shrink-0 opacity-80" />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium truncate">{msg.fileName}</p>
+                        {msg.fileSize && <p className="text-xs opacity-60">{formatFileSize(msg.fileSize)}</p>}
+                      </div>
+                      <Download className="w-4 h-4 flex-shrink-0 opacity-70" />
+                    </a>
+                  )}
+
+                  {/* Text + timestamp */}
+                  <div className="px-4 py-3">
+                    {!isOwn && <p className="text-xs font-medium opacity-75 mb-1">{msg.authorName}</p>}
+                    {msg.text && <p className="text-sm">{msg.text}</p>}
+                    <p className="text-xs opacity-60 mt-1 text-right">{timeLabel(msg.createdAt)}</p>
+                  </div>
                 </div>
               </div>
             );
           })}
           <div ref={messagesEndRef} />
         </div>
-        <form onSubmit={handleSend} className="p-4 border-t border-surface-mid bg-surface-low flex-shrink-0" style={{ paddingBottom: "max(1rem, env(safe-area-inset-bottom))" }}>
+
+        {/* Upload progress */}
+        {uploadProgress !== null && (
+          <div className="px-4 py-2 bg-surface-low border-t border-surface-mid flex-shrink-0">
+            <div className="flex items-center gap-3">
+              <Loader2 className="w-4 h-4 text-primary animate-spin flex-shrink-0" />
+              <div className="flex-1">
+                <p className="text-xs text-muted-foreground truncate mb-1">{uploadFileName}</p>
+                <div className="w-full h-1.5 bg-surface-mid rounded-full overflow-hidden">
+                  <div className="h-full bg-primary rounded-full transition-all duration-200" style={{ width: uploadProgress + "%" }} />
+                </div>
+              </div>
+              <span className="text-xs text-primary font-medium flex-shrink-0">{uploadProgress}%</span>
+            </div>
+          </div>
+        )}
+
+        {/* Input */}
+        <form onSubmit={handleSend} className="p-4 border-t border-surface-mid bg-surface-low flex-shrink-0"
+          style={{ paddingBottom: "max(1rem, env(safe-area-inset-bottom))" }}>
           <div className="flex gap-2 items-center">
             <label className="p-2 rounded-xl hover:bg-surface-mid transition-colors cursor-pointer flex-shrink-0">
               <Paperclip className="w-5 h-5 text-muted-foreground" />
-              <input type="file" className="sr-only" multiple accept="image/*,application/pdf,.doc,.docx" />
+              <input ref={fileInputRef} type="file" className="sr-only"
+                accept="image/*,application/pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv,.zip"
+                onChange={(e) => handleFileUpload(e.target.files)}
+                disabled={uploadProgress !== null} />
             </label>
-            <Input value={message} onChange={e => setMessage(e.target.value)} placeholder="Digite sua mensagem..." className="bg-surface-mid border-0 rounded-2xl text-sm flex-1" />
-            <Button type="submit" size="icon" disabled={!message.trim()} className="rounded-2xl bg-primary hover:bg-primary/80 text-background flex-shrink-0 disabled:opacity-50">
+            <Input value={message} onChange={e => setMessage(e.target.value)}
+              placeholder="Digite sua mensagem..." className="bg-surface-mid border-0 rounded-2xl text-sm flex-1"
+              disabled={uploadProgress !== null} />
+            <Button type="submit" size="icon" disabled={!message.trim() || uploadProgress !== null}
+              className="rounded-2xl bg-primary hover:bg-primary/80 text-background flex-shrink-0 disabled:opacity-50">
               <Send className="w-5 h-5" />
             </Button>
           </div>
@@ -149,54 +357,117 @@ export default function Chat() {
     );
   }
 
+  // ── Conversation list ─────────────────────────────────────────────────────
   return (
     <div className="min-h-screen bg-background">
       <div className="p-4 md:p-6 max-w-2xl mx-auto">
         <div className="flex items-center justify-between mb-5">
           <h1 className="text-2xl font-bold text-foreground font-sans">Chat</h1>
+          <Button onClick={() => setNewConvOpen(true)} className="rounded-2xl bg-primary hover:bg-primary/80 text-background text-sm">
+            <Plus className="w-4 h-4 mr-1.5" />Nova Conversa
+          </Button>
         </div>
 
         <div className="relative mb-4">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-          <Input placeholder="Buscar conversas..." value={search} onChange={e => setSearch(e.target.value)} className="pl-10 bg-surface-low border border-surface-mid rounded-2xl text-sm" />
+          <Input placeholder="Buscar conversas..." value={search} onChange={e => setSearch(e.target.value)}
+            className="pl-10 bg-surface-low border border-surface-mid rounded-2xl text-sm" />
         </div>
 
-        <div className="flex gap-2 mb-5">
-          {(["todos", "geral", "equipe"] as const).map(f => (
-            <button key={f} onClick={() => setFilter(f)} className={"px-4 py-1.5 rounded-2xl text-sm font-medium transition-colors " + (filter === f ? "bg-primary text-background" : "bg-surface-mid text-muted-foreground hover:text-foreground")}>
-              {f === "todos" ? "Todos" : f === "geral" ? "Geral" : "Equipe"}
+        <div className="flex gap-2 mb-5 overflow-x-auto">
+          {(["todos", "direto", "geral", "equipe"] as const).map(f => (
+            <button key={f} onClick={() => setFilter(f)}
+              className={"px-4 py-1.5 rounded-2xl text-sm font-medium transition-colors whitespace-nowrap " +
+                (filter === f ? "bg-primary text-background" : "bg-surface-mid text-muted-foreground hover:text-foreground")}>
+              {f === "todos" ? "Todos" : f === "direto" ? "Direto" : f === "geral" ? "Geral" : "Equipe"}
             </button>
           ))}
         </div>
 
-        {filtered.length === 0 ? (
+        {filteredConvs.length === 0 ? (
           <div className="text-center py-20 text-muted-foreground">
             <MessageCircle className="w-12 h-12 mx-auto mb-3 opacity-30" />
             <p className="text-sm font-medium text-foreground mb-1">Nenhuma conversa ainda</p>
-            <p className="text-xs">As conversas criadas pela sua equipe aparecerão aqui.</p>
+            <p className="text-xs mb-4">Inicie uma conversa com alguém da sua equipe.</p>
+            <Button onClick={() => setNewConvOpen(true)} className="rounded-2xl bg-primary hover:bg-primary/80 text-background">
+              <Plus className="w-4 h-4 mr-2" />Nova Conversa
+            </Button>
           </div>
         ) : (
           <div className="space-y-2">
-            {filtered.map(conv => (
-              <button key={conv.id} onClick={() => setActiveConv(conv)} className="w-full flex items-center gap-3 p-3 rounded-2xl hover:bg-surface-mid active:scale-[0.98] transition-all text-left">
-                <div className="relative flex-shrink-0">
-                  <div className="w-11 h-11 rounded-full bg-primary/20 text-primary flex items-center justify-center font-bold text-sm">{conv.avatar}</div>
-                </div>
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center justify-between mb-0.5">
-                    <p className="font-semibold text-foreground text-sm truncate">{conv.name}</p>
-                    <p className="text-xs text-muted-foreground flex-shrink-0 ml-2">{timeLabel(conv.updatedAt)}</p>
+            {filteredConvs.map(conv => {
+              const displayName = getConvDisplayName(conv, uid);
+              return (
+                <button key={conv.id} onClick={() => setActiveConv(conv)}
+                  className="w-full flex items-center gap-3 p-3 rounded-2xl hover:bg-surface-mid active:scale-[0.98] transition-all text-left">
+                  <div className="relative flex-shrink-0">
+                    <div className="w-11 h-11 rounded-full bg-primary/20 text-primary flex items-center justify-center font-bold text-sm">
+                      {displayName.charAt(0).toUpperCase()}
+                    </div>
+                    {conv.type === "direto" && (
+                      <span className="absolute bottom-0 right-0 w-3 h-3 bg-green-400 rounded-full border-2 border-background" />
+                    )}
                   </div>
-                  <p className="text-xs text-muted-foreground truncate">{conv.lastMessage}</p>
-                </div>
-                {conv.unread > 0 && (
-                  <span className="flex-shrink-0 w-5 h-5 rounded-full bg-primary text-background text-[10px] font-bold flex items-center justify-center">{conv.unread}</span>
-                )}
-              </button>
-            ))}
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center justify-between mb-0.5">
+                      <p className="font-semibold text-foreground text-sm truncate">{displayName}</p>
+                      <p className="text-xs text-muted-foreground flex-shrink-0 ml-2">{timeLabel(conv.updatedAt)}</p>
+                    </div>
+                    <p className="text-xs text-muted-foreground truncate">{conv.lastMessage}</p>
+                  </div>
+                  {conv.unread > 0 && (
+                    <span className="flex-shrink-0 w-5 h-5 rounded-full bg-primary text-background text-[10px] font-bold flex items-center justify-center">
+                      {conv.unread}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
           </div>
         )}
       </div>
+
+      {/* Nova Conversa Modal */}
+      <Dialog open={newConvOpen} onOpenChange={(v) => { setNewConvOpen(v); if (!v) setUserSearch(""); }}>
+        <DialogContent className="bg-surface-low border-surface-mid max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Nova Conversa</DialogTitle>
+          </DialogHeader>
+          <div className="relative mb-3">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+            <Input placeholder="Buscar por nome ou email..." value={userSearch}
+              onChange={e => setUserSearch(e.target.value)}
+              className="pl-10 bg-surface-mid border-0 rounded-xl text-sm" autoFocus />
+          </div>
+          <div className="max-h-72 overflow-y-auto space-y-1">
+            {loadingUsers ? (
+              <div className="flex items-center justify-center py-8 text-muted-foreground gap-2">
+                <Loader2 className="w-4 h-4 animate-spin" />
+                <span className="text-sm">Buscando usuários...</span>
+              </div>
+            ) : filteredUsers.length === 0 ? (
+              <div className="text-center py-8 text-muted-foreground">
+                <p className="text-sm">{userSearch ? "Nenhum usuário encontrado." : "Nenhum outro usuário registrado ainda."}</p>
+              </div>
+            ) : (
+              filteredUsers.map(user => (
+                <button key={user.uid} onClick={() => !creatingConv && handleStartConversation(user)}
+                  disabled={creatingConv}
+                  className="w-full flex items-center gap-3 p-3 rounded-2xl hover:bg-surface-mid active:scale-[0.98] transition-all text-left disabled:opacity-60">
+                  <div className="w-10 h-10 rounded-full bg-primary/20 text-primary flex items-center justify-center font-bold text-sm flex-shrink-0">
+                    {user.name?.charAt(0).toUpperCase()}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="font-medium text-foreground text-sm truncate">{user.name}</p>
+                    <p className="text-xs text-muted-foreground truncate">{user.role} · {user.email}</p>
+                  </div>
+                  {creatingConv && <Loader2 className="w-4 h-4 animate-spin text-primary flex-shrink-0" />}
+                </button>
+              ))
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

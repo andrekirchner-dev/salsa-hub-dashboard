@@ -11,34 +11,73 @@ service cloud.firestore {
       return isAuthenticated() && request.auth.uid == uid;
     }
 
+    // ── Códigos de cargo ──────────────────────────────────────────────────────
+    // Autenticados podem ler para validar no SetupProfile.
+    // Escrita apenas via Firebase Console (admin).
+    match /cargoCodes/{code} {
+      allow read: if isAuthenticated();
+      allow write: if false;
+    }
+
     // ── Perfis de usuário ─────────────────────────────────────────────────────
-    // Cada usuário pode ler e escrever apenas o próprio perfil.
+    // Qualquer usuário autenticado pode LER perfis (busca de contatos no Chat
+    // e no sistema de convites da equipe).
+    // Apenas o próprio usuário pode ESCREVER seu perfil.
     match /profiles/{uid} {
-      allow read, write: if isOwner(uid);
+      allow read: if isAuthenticated();
+      allow write: if isOwner(uid);
     }
 
     // ── Dados pessoais do usuário ─────────────────────────────────────────────
     // Toda a árvore users/{uid}/** é isolada por uid.
-    // Nenhum usuário acessa dados de outro usuário.
     match /users/{uid}/{document=**} {
       allow read, write: if isOwner(uid);
     }
 
+    // ── Notificações cross-user ───────────────────────────────────────────────
+    // Qualquer usuário autenticado pode CRIAR notificações para outro usuário
+    // (ex: convites de equipe, menções no chat).
+    // Apenas o dono pode LER e atualizar as suas.
+    match /users/{uid}/notifications/{notifId} {
+      allow read, update, delete: if isOwner(uid);
+      allow create: if isAuthenticated();
+    }
+
     // ── Dados administrativos ─────────────────────────────────────────────────
-    // admin/{uid}/** é isolado por uid (cada admin vê só os seus dados).
     match /admin/{uid}/{document=**} {
       allow read, write: if isOwner(uid);
     }
 
+    // ── Convites de equipe ────────────────────────────────────────────────────
+    // Qualquer usuário autenticado pode criar convites.
+    // O criador e o convidado (matched por email) podem ler e atualizar.
+    match /invites/{inviteId} {
+      allow create: if isAuthenticated();
+
+      allow read: if isAuthenticated() && (
+        request.auth.uid == resource.data.inviterUid ||
+        request.auth.token.email == resource.data.inviteeEmail
+      );
+
+      allow update: if isAuthenticated() && (
+        request.auth.uid == resource.data.inviterUid ||
+        request.auth.token.email == resource.data.inviteeEmail
+      );
+
+      allow delete: if isAuthenticated() &&
+        request.auth.uid == resource.data.inviterUid;
+    }
+
     // ── Conversas (Chat) ──────────────────────────────────────────────────────
-    // Um usuário pode ler/escrever conversas se estiver na lista participantUids.
     match /conversations/{convId} {
-      allow read, write: if isAuthenticated()
+      allow read: if isAuthenticated()
         && request.auth.uid in resource.data.participantUids;
 
-      // Permite criar nova conversa se o criador incluir o próprio uid
       allow create: if isAuthenticated()
         && request.auth.uid in request.resource.data.participantUids;
+
+      allow update: if isAuthenticated()
+        && request.auth.uid in resource.data.participantUids;
 
       // Mensagens dentro da conversa
       match /messages/{msgId} {
@@ -48,6 +87,9 @@ service cloud.firestore {
         allow create: if isAuthenticated()
           && request.auth.uid in get(/databases/$(database)/documents/conversations/$(convId)).data.participantUids
           && request.resource.data.authorUid == request.auth.uid;
+
+        allow update, delete: if isAuthenticated()
+          && request.auth.uid == resource.data.authorUid;
       }
     }
 

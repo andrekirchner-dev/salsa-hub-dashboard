@@ -1,13 +1,14 @@
 import { lazy, Suspense, useEffect, useState } from "react";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { onAuthStateChanged } from "firebase/auth";
-import { doc, getDoc } from "firebase/firestore";
+import { doc, getDoc, collection, query, where, getDocs, addDoc, serverTimestamp } from "firebase/firestore";
 import type { User } from "firebase/auth";
 import { auth, db } from "@/integrations/firebase/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { toast } from "@/components/ui/use-toast";
 
 // ── Lazy pages ────────────────────────────────────────────────────────────────
 const LoadingPage   = lazy(() => import("@/components/LoadingPage"));
@@ -53,6 +54,36 @@ const App = () => {
         const data = profileDoc.data();
         const complete = !!(data?.name && data?.role);
         setProfile({ complete, loading: false });
+
+        // ── Check for pending invites by email ───────────────────────────────
+        if (complete && firebaseUser.email) {
+          try {
+            const invitesSnap = await getDocs(
+              query(
+                collection(db, "invites"),
+                where("inviteeEmail", "==", firebaseUser.email.toLowerCase()),
+                where("status", "==", "pending"),
+              )
+            );
+            if (!invitesSnap.empty) {
+              const invite = invitesSnap.docs[0].data();
+              toast({
+                title: "Convite de equipe recebido! 🎉",
+                description: `${invite.inviterName} te adicionou à equipe "${invite.teamName}" como ${invite.role}. Acesse Equipe para ver.`,
+              });
+              // Auto-write notification
+              await addDoc(collection(db, "users", firebaseUser.uid, "notifications"), {
+                type: "team",
+                title: "Convite de equipe recebido!",
+                description: `${invite.inviterName} te convidou para a equipe "${invite.teamName}" como ${invite.role}.`,
+                read: false,
+                createdAt: serverTimestamp(),
+              });
+            }
+          } catch {
+            // Silently fail — invites are optional
+          }
+        }
       } else {
         setProfile({ complete: false, loading: false });
       }

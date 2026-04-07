@@ -1,0 +1,29 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    // ── Arquivos de chat ───────────────────────────────────────────────────────
+    // Qualquer usuário autenticado pode ler e escrever arquivos de chat.
+    // Limite de 20MB por arquivo para controle de custo.
+    match /chat/{conversationId}/{fileName} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null
+        && request.resource.size < 20 * 1024 * 1024
+        && request.resource.contentType.matches('image/.*|application/pdf|application/msword|application/vnd.openxmlformats.*|text/.*|video/.*|audio/.*');
+    }
+
+    // ── Avatares de perfil ─────────────────────────────────────────────────────
+    match /avatars/{uid}/{fileName} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null
+        && request.auth.uid == uid
+        && request.resource.size < 5 * 1024 * 1024
+        && request.resource.contentType.matches('image/.*');
+    }
+
+    // ── Bloqueia tudo o mais ───────────────────────────────────────────────────
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

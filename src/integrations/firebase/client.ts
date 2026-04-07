@@ -7,13 +7,15 @@ import {
   getFirestore,
   enableIndexedDbPersistence,
 } from "firebase/firestore";
+import { getStorage } from "firebase/storage";
 
 // ─── NOTA DE SEGURANÇA ────────────────────────────────────────────────────────
 // O Firebase config (apiKey, projectId...) é PUBLIC BY DESIGN e pode aparecer
 // no DevTools (F12). Isso é esperado e seguro — o apiKey do Firebase apenas
 // identifica o projeto, NÃO concede acesso aos dados.
 //
-// A segurança real vem das Firestore Security Rules (firestore.rules).
+// A segurança real vem das Firestore Security Rules (firestore.rules) e das
+// Firebase Storage Rules (storage.rules).
 // Referência: https://firebase.google.com/docs/projects/api-keys
 //
 // ⚠️  NUNCA coloque em VITE_: service account JSON, tokens de admin,
@@ -35,6 +37,7 @@ const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0
 
 export const auth = getAuth(app);
 export const db = getFirestore(app);
+export const storage = getStorage(app);
 export const googleProvider = new GoogleAuthProvider();
 
 // Force account selection every time (best practice de segurança)
