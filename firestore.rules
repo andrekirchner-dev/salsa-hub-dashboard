@@ -93,6 +93,35 @@ service cloud.firestore {
       }
     }
 
+    // ── Tarefas globais (atribuídas a pessoas ou equipes) ────────────────────
+    // O criador e o destinatário (por uid ou equipe) podem ler e atualizar.
+    // Apenas o criador pode deletar.
+    match /tasks/{taskId} {
+      allow read: if isAuthenticated() && (
+        resource.data.createdByUid == request.auth.uid ||
+        resource.data.assignedToUid == request.auth.uid
+      );
+
+      allow create: if isAuthenticated()
+        && request.resource.data.createdByUid == request.auth.uid;
+
+      allow update: if isAuthenticated() && (
+        resource.data.createdByUid == request.auth.uid ||
+        resource.data.assignedToUid == request.auth.uid
+      );
+
+      allow delete: if isAuthenticated()
+        && resource.data.createdByUid == request.auth.uid;
+
+      // Subtarefas das tarefas globais
+      match /subtasks/{subtaskId} {
+        allow read, write: if isAuthenticated() && (
+          get(/databases/$(database)/documents/tasks/$(taskId)).data.createdByUid == request.auth.uid ||
+          get(/databases/$(database)/documents/tasks/$(taskId)).data.assignedToUid == request.auth.uid
+        );
+      }
+    }
+
     // ── Bloqueia tudo o mais ──────────────────────────────────────────────────
     match /{document=**} {
       allow read, write: if false;

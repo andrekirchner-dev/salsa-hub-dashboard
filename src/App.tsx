@@ -26,8 +26,9 @@ const Chat          = lazy(() => import("@/pages/Chat"));
 const Contacts      = lazy(() => import("@/pages/Contacts"));
 const Notifications = lazy(() => import("@/pages/Notifications"));
 const Profile       = lazy(() => import("@/pages/Profile"));
-const AdminPanel    = lazy(() => import("@/pages/AdminPanel"));
-const NotFound      = lazy(() => import("@/pages/NotFound"));
+const AdminPanel          = lazy(() => import("@/pages/AdminPanel"));
+const TasksManagementPage = lazy(() => import("@/pages/TasksManagementPage"));
+const NotFound            = lazy(() => import("@/pages/NotFound"));
 
 import { AppLayout } from "@/components/layout/AppLayout";
 
@@ -151,6 +152,7 @@ const App = () => {
                   <Route path="/contacts"                   element={<Contacts />} />
                   <Route path="/notifications"              element={<Notifications />} />
                   <Route path="/profile"                    element={<Profile />} />
+                  <Route path="/tasks"                       element={<TasksManagementPage />} />
                   <Route path="/admin"                      element={<AdminPanel />} />
                   <Route path="*"                           element={<NotFound />} />
                 </Route>

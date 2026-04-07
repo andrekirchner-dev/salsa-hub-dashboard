@@ -2,13 +2,14 @@ import {
   Sidebar, SidebarContent, SidebarFooter, SidebarHeader, useSidebar,
 } from "@/components/ui/sidebar";
 import { Button } from "@/components/ui/button";
-import { LayoutDashboard, Package, Megaphone, CalendarDays, Users, MessageCircle, User, ChevronLeft } from "lucide-react";
+import { LayoutDashboard, Package, Megaphone, CalendarDays, Users, MessageCircle, User, ChevronLeft, ListTodo } from "lucide-react";
 import { Link } from "react-router-dom";
 
 const navItems = [
   { title: "Dashboard", url: "/", icon: LayoutDashboard },
   { title: "Chat", url: "/chat", icon: MessageCircle },
   { title: "Produtos", url: "/products", icon: Package },
+  { title: "Tarefas", url: "/tasks", icon: ListTodo },
   { title: "Marketing", url: "/marketing", icon: Megaphone },
   { title: "Calendário", url: "/calendar", icon: CalendarDays },
   { title: "Equipe", url: "/team", icon: Users },

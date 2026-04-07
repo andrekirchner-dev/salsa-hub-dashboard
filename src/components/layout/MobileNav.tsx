@@ -1,4 +1,4 @@
-import { Home, MessageCircle, Package, Users, User } from "lucide-react";
+import { MessageCircle, Package, Users, User, ListTodo } from "lucide-react";
 import { Link, useLocation } from "react-router-dom";
 
 export function MobileNav() {
@@ -43,15 +43,15 @@ export function MobileNav() {
           <img src="/parsley.png" alt="SalsaHub" className="w-7 h-7 object-contain" />
         </Link>
 
-        {/* Equipe */}
+        {/* Tarefas */}
         <Link
-          to="/team"
+          to="/tasks"
           className={`flex flex-col items-center gap-1 p-2 rounded-2xl transition-colors min-w-[48px] ${
-            isActive("/team") ? "text-primary" : "text-muted-foreground"
+            isActive("/tasks") ? "text-primary" : "text-muted-foreground"
           }`}
         >
-          <Users className="w-5 h-5" />
-          <span className="text-[10px] font-medium">Equipe</span>
+          <ListTodo className="w-5 h-5" />
+          <span className="text-[10px] font-medium">Tarefas</span>
         </Link>
 
         {/* Perfil */}

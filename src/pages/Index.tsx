@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, Link } from "react-router-dom";
 import { TrendingUp, Calendar, Package, Users, ChevronDown, ChevronUp, ListTodo, Plus, Trash2 } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
@@ -153,6 +153,13 @@ export default function Index() {
           </div>
           <div className="flex items-center gap-2">
             {tasksOpen && <span className="text-xs text-muted-foreground">{pendingCount} pendentes</span>}
+            <Link
+              to="/tasks"
+              onClick={e => e.stopPropagation()}
+              className="text-xs text-primary hover:text-primary/80 transition-colors font-medium px-2 py-1 rounded-lg hover:bg-primary/10"
+            >
+              Ver todas →
+            </Link>
             {tasksOpen ? <ChevronUp className="w-4 h-4 text-muted-foreground" /> : <ChevronDown className="w-4 h-4 text-muted-foreground" />}
           </div>
         </button>

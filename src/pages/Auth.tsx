@@ -1,23 +1,53 @@
-import { useState } from "react";
-import { signInWithPopup } from "firebase/auth";
+import { useState, useEffect } from "react";
+import { signInWithRedirect, getRedirectResult, signInWithPopup } from "firebase/auth";
 import { auth, googleProvider } from "@/integrations/firebase/client";
 
 export default function Auth() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Captura o resultado do redirect quando a página recarrega após OAuth
+  useEffect(() => {
+    getRedirectResult(auth)
+      .then((result) => {
+        if (result) console.log("Redirect auth success:", result.user.email);
+      })
+      .catch((err: any) => {
+        // Ignora erros esperados de "sem redirect pendente"
+        const ignoredCodes = ["auth/no-current-user", "auth/null-user"];
+        if (err.code && !ignoredCodes.includes(err.code)) {
+          console.error("Redirect result error:", err.code, err.message);
+          setError(`Erro (${err.code}): ${err.message}`);
+        }
+      });
+  }, []);
+
   const handleGoogleSignIn = async () => {
     setLoading(true);
     setError(null);
     try {
+      // Tenta popup primeiro; se falhar (popup bloqueado), usa redirect
       await signInWithPopup(auth, googleProvider);
-      // onAuthStateChanged in App.tsx handles the redirect
     } catch (err: any) {
-      if (err.code !== "auth/popup-closed-by-user") {
-        setError("Erro ao entrar com Google. Tente novamente.");
+      console.error("Popup error:", err.code, err.message);
+      if (
+        err.code === "auth/popup-blocked" ||
+        err.code === "auth/cancelled-popup-request" ||
+        err.code === "auth/internal-error"
+      ) {
+        // Fallback para redirect
+        try {
+          await signInWithRedirect(auth, googleProvider);
+        } catch (redirectErr: any) {
+          setError(`Erro (${redirectErr.code}): ${redirectErr.message}`);
+          setLoading(false);
+        }
+      } else if (err.code !== "auth/popup-closed-by-user") {
+        setError(`Erro (${err.code}): ${err.message}`);
+        setLoading(false);
+      } else {
+        setLoading(false);
       }
-    } finally {
-      setLoading(false);
     }
   };
 

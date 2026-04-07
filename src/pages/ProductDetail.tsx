@@ -259,10 +259,17 @@ export default function ProductDetail() {
               {tasks.map(task => {
                 const s = getTaskStyle(task.status);
                 return (
-                  <div key={task.id} className={"flex items-center justify-between p-3 bg-surface-mid rounded-2xl group " + s.border}>
+                  <div
+                    key={task.id}
+                    className={"flex items-center justify-between p-3 bg-surface-mid rounded-2xl group cursor-pointer hover:bg-surface-high transition-colors " + s.border}
+                    onClick={() => navigate(`/products/${productId}/tasks/${task.id}`)}
+                  >
                     <p className="text-sm text-foreground flex-1 pr-3">{task.title}</p>
                     <Badge className={"text-[10px] px-2 py-0.5 flex-shrink-0 " + s.badge}>{s.label}</Badge>
-                    <button onClick={() => handleDeleteTask(task.id, task.title)} className="ml-2 opacity-0 group-hover:opacity-100 transition-opacity text-red-400">
+                    <button
+                      onClick={(e) => { e.stopPropagation(); handleDeleteTask(task.id, task.title); }}
+                      className="ml-2 opacity-0 group-hover:opacity-100 transition-opacity text-red-400"
+                    >
                       <Trash2 className="w-3.5 h-3.5" />
                     </button>
                   </div>
