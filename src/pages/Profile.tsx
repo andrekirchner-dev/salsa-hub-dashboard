@@ -1,81 +1,96 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { ArrowLeft, User, Mail, Phone, Save, LogOut, Bell, Moon, Globe, Lock, ChevronRight, Shield } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { useNavigate } from "react-router-dom";
+import { auth, db } from "@/integrations/firebase/client";
+import { signOut } from "firebase/auth";
+import { doc, getDoc, updateDoc } from "firebase/firestore";
+import { useToast } from "@/hooks/use-toast";
+
+const ROLE_COLOR: Record<string, string> = {
+  CEO: "bg-primary/20 text-primary",
+  CFO: "bg-primary/20 text-primary",
+  CMO: "bg-primary/20 text-primary",
+  COO: "bg-primary/20 text-primary",
+  Gerente: "bg-purple-500/20 text-purple-400",
+  Coordenador: "bg-purple-500/20 text-purple-400",
+};
 
 export default function Profile() {
   const navigate = useNavigate();
-  const [profile, setProfile] = useState({
-    name: "André Pereira",
-    email: "andre@salsahub.com",
-    phone: "+55 11 99999-0000",
-  });
+  const { toast } = useToast();
+  const currentUser = auth.currentUser;
+  const uid = currentUser?.uid ?? "";
+
+  const [name, setName] = useState(currentUser?.displayName ?? "");
+  const [phone, setPhone] = useState("");
+  const [role, setRole] = useState("");
+  const [company, setCompany] = useState("");
+  const [saving, setSaving] = useState(false);
 
   const [settings, setSettings] = useState({
     notifications: true,
     darkMode: true,
-    language: "Português",
     twoFactor: false,
   });
+
+  useEffect(() => {
+    if (!uid) return;
+    getDoc(doc(db, "profiles", uid)).then(snap => {
+      if (snap.exists()) {
+        const d = snap.data();
+        setName(d.name ?? currentUser?.displayName ?? "");
+        setPhone(d.phone ?? "");
+        setRole(d.role ?? "");
+        setCompany(d.company ?? "");
+      }
+    });
+  }, [uid]);
+
+  const handleSave = async () => {
+    if (!uid) return;
+    setSaving(true);
+    await updateDoc(doc(db, "profiles", uid), {
+      name: name.trim(),
+      phone: phone.trim(),
+    });
+    setSaving(false);
+    toast({ title: "Perfil atualizado!", description: "Suas informações foram salvas." });
+  };
+
+  const handleLogout = async () => {
+    await signOut(auth);
+    navigate("/auth", { replace: true });
+  };
 
   const settingsSections = [
     {
       title: "Preferências",
       items: [
-        {
-          icon: Bell,
-          label: "Notificações",
-          description: "Receber alertas de tarefas e mensagens",
-          type: "toggle",
-          key: "notifications",
-        },
-        {
-          icon: Moon,
-          label: "Modo Escuro",
-          description: "Interface com fundo escuro",
-          type: "toggle",
-          key: "darkMode",
-        },
-        {
-          icon: Globe,
-          label: "Idioma",
-          description: settings.language,
-          type: "nav",
-          key: "language",
-        },
+        { icon: Bell, label: "Notificações", description: "Receber alertas de tarefas e mensagens", type: "toggle", key: "notifications" },
+        { icon: Moon, label: "Modo Escuro", description: "Interface com fundo escuro", type: "toggle", key: "darkMode" },
+        { icon: Globe, label: "Idioma", description: "Português", type: "nav", key: "language" },
       ],
     },
     {
       title: "Segurança",
       items: [
-        {
-          icon: Lock,
-          label: "Alterar Senha",
-          description: "Última alteração há 30 dias",
-          type: "nav",
-          key: "password",
-        },
-        {
-          icon: Shield,
-          label: "Autenticação em 2 Fatores",
-          description: settings.twoFactor ? "Ativado" : "Desativado",
-          type: "toggle",
-          key: "twoFactor",
-        },
+        { icon: Lock, label: "Alterar Senha", description: "Login via Google OAuth — sem senha", type: "nav", key: "password" },
+        { icon: Shield, label: "Autenticação em 2 Fatores", description: settings.twoFactor ? "Ativado" : "Desativado", type: "toggle", key: "twoFactor" },
       ],
     },
   ];
+
+  const initials = name.split(" ").map(n => n[0]).join("").slice(0, 2).toUpperCase() || "?";
+  const roleColor = ROLE_COLOR[role] ?? "bg-blue-500/20 text-blue-400";
 
   return (
     <div className="min-h-screen bg-background">
       <div className="p-4 md:p-8 max-w-2xl mx-auto">
         <div className="flex items-center gap-3 mb-6">
-          <button
-            onClick={() => navigate(-1)}
-            className="p-2 rounded-xl hover:bg-surface-mid transition-colors"
-          >
+          <button onClick={() => navigate(-1)} className="p-2 rounded-xl hover:bg-surface-mid transition-colors">
             <ArrowLeft className="w-5 h-5 text-foreground" />
           </button>
           <h1 className="text-2xl font-bold text-foreground font-sans">Meu Perfil</h1>
@@ -83,57 +98,44 @@ export default function Profile() {
 
         <div className="bg-surface-low rounded-3xl p-6 border border-surface-mid mb-4">
           <div className="flex items-center gap-4 mb-6">
-            <div className="w-16 h-16 rounded-full bg-primary/20 text-primary flex items-center justify-center text-2xl font-bold flex-shrink-0">
-              {profile.name.split(" ").map(n => n[0]).join("").slice(0, 2)}
-            </div>
+            {currentUser?.photoURL ? (
+              <img src={currentUser.photoURL} alt={name} className="w-16 h-16 rounded-full object-cover flex-shrink-0" />
+            ) : (
+              <div className="w-16 h-16 rounded-full bg-primary/20 text-primary flex items-center justify-center text-2xl font-bold flex-shrink-0">
+                {initials}
+              </div>
+            )}
             <div>
-              <h2 className="text-xl font-bold text-foreground">{profile.name}</h2>
-              <Badge className="bg-primary/20 text-primary text-xs mt-1">Gerente</Badge>
-              <p className="text-xs text-muted-foreground mt-1">Salsa Digital</p>
+              <h2 className="text-xl font-bold text-foreground">{name}</h2>
+              {role && <Badge className={"text-xs mt-1 " + roleColor}>{role}</Badge>}
+              {company && <p className="text-xs text-muted-foreground mt-1">{company}</p>}
             </div>
           </div>
 
           <div className="space-y-4">
             <div>
               <label className="text-xs text-muted-foreground block mb-1.5 flex items-center gap-1.5">
-                <User className="w-3.5 h-3.5" />
-                Nome completo
+                <User className="w-3.5 h-3.5" /> Nome completo
               </label>
-              <Input
-                value={profile.name}
-                onChange={e => setProfile(p => ({ ...p, name: e.target.value }))}
-                className="bg-surface-mid border-0 rounded-2xl text-sm"
-              />
+              <Input value={name} onChange={e => setName(e.target.value)} className="bg-surface-mid border-0 rounded-2xl text-sm" />
             </div>
             <div>
               <label className="text-xs text-muted-foreground block mb-1.5 flex items-center gap-1.5">
-                <Mail className="w-3.5 h-3.5" />
-                Email
+                <Mail className="w-3.5 h-3.5" /> Email
               </label>
-              <Input
-                value={profile.email}
-                onChange={e => setProfile(p => ({ ...p, email: e.target.value }))}
-                className="bg-surface-mid border-0 rounded-2xl text-sm"
-                type="email"
-              />
+              <Input value={currentUser?.email ?? ""} readOnly className="bg-surface-mid border-0 rounded-2xl text-sm opacity-60 cursor-not-allowed" />
             </div>
             <div>
               <label className="text-xs text-muted-foreground block mb-1.5 flex items-center gap-1.5">
-                <Phone className="w-3.5 h-3.5" />
-                Telefone
+                <Phone className="w-3.5 h-3.5" /> Telefone
               </label>
-              <Input
-                value={profile.phone}
-                onChange={e => setProfile(p => ({ ...p, phone: e.target.value }))}
-                className="bg-surface-mid border-0 rounded-2xl text-sm"
-                type="tel"
-              />
+              <Input value={phone} onChange={e => setPhone(e.target.value)} className="bg-surface-mid border-0 rounded-2xl text-sm" type="tel" placeholder="+55 11 99999-0000" />
             </div>
           </div>
 
-          <Button className="w-full mt-4 rounded-2xl bg-primary hover:bg-primary/80 text-background">
+          <Button onClick={handleSave} disabled={saving} className="w-full mt-4 rounded-2xl bg-primary hover:bg-primary/80 text-background">
             <Save className="w-4 h-4 mr-2" />
-            Salvar Alterações
+            {saving ? "Salvando..." : "Salvar Alterações"}
           </Button>
         </div>
 
@@ -174,7 +176,10 @@ export default function Profile() {
           </div>
         ))}
 
-        <button className="w-full flex items-center justify-center gap-2 p-4 rounded-3xl border border-red-500/20 text-red-400 hover:bg-red-500/10 transition-colors">
+        <button
+          onClick={handleLogout}
+          className="w-full flex items-center justify-center gap-2 p-4 rounded-3xl border border-red-500/20 text-red-400 hover:bg-red-500/10 transition-colors"
+        >
           <LogOut className="w-4 h-4" />
           <span className="text-sm font-medium">Sair da Conta</span>
         </button>

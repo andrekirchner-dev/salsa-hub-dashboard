@@ -1,0 +1,59 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ── Helpers ──────────────────────────────────────────────────────────────
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(uid) {
+      return isAuthenticated() && request.auth.uid == uid;
+    }
+
+    // ── Perfis de usuário ─────────────────────────────────────────────────────
+    // Cada usuário pode ler e escrever apenas o próprio perfil.
+    match /profiles/{uid} {
+      allow read, write: if isOwner(uid);
+    }
+
+    // ── Dados pessoais do usuário ─────────────────────────────────────────────
+    // Toda a árvore users/{uid}/** é isolada por uid.
+    // Nenhum usuário acessa dados de outro usuário.
+    match /users/{uid}/{document=**} {
+      allow read, write: if isOwner(uid);
+    }
+
+    // ── Dados administrativos ─────────────────────────────────────────────────
+    // admin/{uid}/** é isolado por uid (cada admin vê só os seus dados).
+    match /admin/{uid}/{document=**} {
+      allow read, write: if isOwner(uid);
+    }
+
+    // ── Conversas (Chat) ──────────────────────────────────────────────────────
+    // Um usuário pode ler/escrever conversas se estiver na lista participantUids.
+    match /conversations/{convId} {
+      allow read, write: if isAuthenticated()
+        && request.auth.uid in resource.data.participantUids;
+
+      // Permite criar nova conversa se o criador incluir o próprio uid
+      allow create: if isAuthenticated()
+        && request.auth.uid in request.resource.data.participantUids;
+
+      // Mensagens dentro da conversa
+      match /messages/{msgId} {
+        allow read: if isAuthenticated()
+          && request.auth.uid in get(/databases/$(database)/documents/conversations/$(convId)).data.participantUids;
+
+        allow create: if isAuthenticated()
+          && request.auth.uid in get(/databases/$(database)/documents/conversations/$(convId)).data.participantUids
+          && request.resource.data.authorUid == request.auth.uid;
+      }
+    }
+
+    // ── Bloqueia tudo o mais ──────────────────────────────────────────────────
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

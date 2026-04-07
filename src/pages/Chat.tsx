@@ -1,52 +1,102 @@
-import { useState } from "react";
-import { ArrowLeft, Plus, Search, Send, Paperclip } from "lucide-react";
+import { useState, useEffect, useRef } from "react";
+import { ArrowLeft, Plus, Search, Send, Paperclip, MessageCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { auth, db } from "@/integrations/firebase/client";
+import {
+  collection, onSnapshot, addDoc, serverTimestamp, query,
+  orderBy, doc, setDoc, getDoc,
+} from "firebase/firestore";
 
-interface Conversation { id: number; name: string; lastMessage: string; time: string; unread: number; avatar: string; type: "geral" | "equipe"; online?: boolean; }
-interface Message { id: number; text: string; author: string; timestamp: string; isOwn: boolean; }
+interface Conversation {
+  id: string;
+  name: string;
+  lastMessage: string;
+  updatedAt: any;
+  unread: number;
+  avatar: string;
+  type: "geral" | "equipe";
+  participantUids: string[];
+}
 
-const conversations: Conversation[] = [
-  { id: 1, name: "Geral", lastMessage: "Alguem consegue revisar o briefing?", time: "10:36", unread: 2, avatar: "GE", type: "geral" },
-  { id: 2, name: "Design", lastMessage: "Novos wireframes prontos!", time: "10:20", unread: 0, avatar: "DE", type: "equipe" },
-  { id: 3, name: "Andre Pereira", lastMessage: "Otimo trabalho na campanha!", time: "09:45", unread: 1, avatar: "AP", type: "equipe", online: true },
-  { id: 4, name: "Marketing", lastMessage: "Dados de engajamento aqui", time: "Ontem", unread: 0, avatar: "MK", type: "geral" },
-  { id: 5, name: "Desenvolvimento", lastMessage: "Build em producao!", time: "Ontem", unread: 3, avatar: "DV", type: "equipe" },
-  { id: 6, name: "Mariana Silva", lastMessage: "Vou entregar hoje", time: "Seg", unread: 0, avatar: "MS", type: "equipe", online: true },
-];
+interface Message {
+  id: string;
+  text: string;
+  authorName: string;
+  authorUid: string;
+  createdAt: any;
+}
 
-const mockMessages: Message[] = [
-  { id: 1, text: "Oi pessoal! Como estao os projetos?", author: "Andre", timestamp: "10:30", isOwn: true },
-  { id: 2, text: "Tudo bem! Estou finalizando o design das telas", author: "Mariana", timestamp: "10:32", isOwn: false },
-  { id: 3, text: "Otimo! Quando fica pronto?", author: "Andre", timestamp: "10:33", isOwn: true },
-  { id: 4, text: "Ate o final do dia consigo entregar", author: "Mariana", timestamp: "10:35", isOwn: false },
-  { id: 5, text: "Perfeito!", author: "Andre", timestamp: "10:36", isOwn: true },
-];
-
-const mockContacts = [
-  { id: 1, name: "Mariana Silva", email: "mariana@salsahub.com" },
-  { id: 2, name: "Carlos Mendes", email: "carlos@salsahub.com" },
-  { id: 3, name: "Ana Costa", email: "ana@salsahub.com" },
-];
+function timeLabel(ts: any): string {
+  if (!ts) return "";
+  const date = ts.toDate ? ts.toDate() : new Date(ts);
+  const diff = Date.now() - date.getTime();
+  if (diff < 86400000) return date.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+  if (diff < 172800000) return "Ontem";
+  return date.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" });
+}
 
 export default function Chat() {
+  const currentUser = auth.currentUser!;
+  const uid = currentUser.uid;
+  const userName = currentUser.displayName ?? "Eu";
+
+  const [conversations, setConversations] = useState<Conversation[]>([]);
   const [activeConv, setActiveConv] = useState<Conversation | null>(null);
+  const [messages, setMessages] = useState<Message[]>([]);
   const [filter, setFilter] = useState<"todos" | "geral" | "equipe">("todos");
   const [message, setMessage] = useState("");
   const [search, setSearch] = useState("");
-  const [newChatOpen, setNewChatOpen] = useState(false);
-  const [searchContact, setSearchContact] = useState("");
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  // Load conversations
+  useEffect(() => {
+    const q = query(
+      collection(db, "conversations"),
+      orderBy("updatedAt", "desc")
+    );
+    const unsub = onSnapshot(q, (snap) => {
+      const all = snap.docs
+        .map(d => ({ id: d.id, ...d.data() } as Conversation))
+        .filter(c => c.participantUids?.includes(uid));
+      setConversations(all);
+    });
+    return unsub;
+  }, [uid]);
+
+  // Load messages for active conversation
+  useEffect(() => {
+    if (!activeConv) { setMessages([]); return; }
+    const q = query(collection(db, "conversations", activeConv.id, "messages"), orderBy("createdAt", "asc"));
+    const unsub = onSnapshot(q, (snap) => {
+      setMessages(snap.docs.map(d => ({ id: d.id, ...d.data() } as Message)));
+      setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }), 100);
+    });
+    return unsub;
+  }, [activeConv?.id]);
+
+  const handleSend = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!message.trim() || !activeConv) return;
+    const text = message.trim();
+    setMessage("");
+    await addDoc(collection(db, "conversations", activeConv.id, "messages"), {
+      text,
+      authorName: userName,
+      authorUid: uid,
+      createdAt: serverTimestamp(),
+    });
+    await setDoc(doc(db, "conversations", activeConv.id), {
+      lastMessage: text,
+      updatedAt: serverTimestamp(),
+    }, { merge: true });
+  };
 
   const filtered = conversations.filter(c => {
     const matchesSearch = c.name.toLowerCase().includes(search.toLowerCase());
     const matchesFilter = filter === "todos" || c.type === filter;
     return matchesSearch && matchesFilter;
   });
-
-  const filteredContacts = mockContacts.filter(c => c.name.toLowerCase().includes(searchContact.toLowerCase()));
-
-  const handleSend = (e: React.FormEvent) => { e.preventDefault(); if (message.trim()) setMessage(""); };
 
   if (activeConv) {
     return (
@@ -55,22 +105,33 @@ export default function Chat() {
           <button onClick={() => setActiveConv(null)} className="p-2 rounded-xl hover:bg-surface-mid transition-colors">
             <ArrowLeft className="w-5 h-5 text-foreground" />
           </button>
-          <div className="w-8 h-8 rounded-full bg-primary/20 text-primary flex items-center justify-center text-xs font-bold">{activeConv.avatar}</div>
+          <div className="w-8 h-8 rounded-full bg-primary/20 text-primary flex items-center justify-center text-xs font-bold">
+            {activeConv.avatar}
+          </div>
           <div className="flex-1 min-w-0">
             <p className="font-semibold text-foreground text-sm truncate">{activeConv.name}</p>
-            {activeConv.online && <p className="text-xs text-primary">Online</p>}
           </div>
         </div>
         <div className="flex-1 overflow-y-auto p-4 space-y-3">
-          {mockMessages.map(msg => (
-            <div key={msg.id} className={"flex " + (msg.isOwn ? "justify-end" : "justify-start")}>
-              <div className={"max-w-[75%] px-4 py-3 rounded-2xl " + (msg.isOwn ? "bg-primary text-background" : "bg-surface-mid text-foreground")}>
-                {!msg.isOwn && <p className="text-xs font-medium opacity-75 mb-1">{msg.author}</p>}
-                <p className="text-sm">{msg.text}</p>
-                <p className="text-xs opacity-60 mt-1 text-right">{msg.timestamp}</p>
-              </div>
+          {messages.length === 0 && (
+            <div className="text-center py-12 text-muted-foreground">
+              <MessageCircle className="w-8 h-8 mx-auto mb-2 opacity-30" />
+              <p className="text-xs">Seja o primeiro a enviar uma mensagem!</p>
             </div>
-          ))}
+          )}
+          {messages.map(msg => {
+            const isOwn = msg.authorUid === uid;
+            return (
+              <div key={msg.id} className={"flex " + (isOwn ? "justify-end" : "justify-start")}>
+                <div className={"max-w-[75%] px-4 py-3 rounded-2xl " + (isOwn ? "bg-primary text-background" : "bg-surface-mid text-foreground")}>
+                  {!isOwn && <p className="text-xs font-medium opacity-75 mb-1">{msg.authorName}</p>}
+                  <p className="text-sm">{msg.text}</p>
+                  <p className="text-xs opacity-60 mt-1 text-right">{timeLabel(msg.createdAt)}</p>
+                </div>
+              </div>
+            );
+          })}
+          <div ref={messagesEndRef} />
         </div>
         <form onSubmit={handleSend} className="p-4 border-t border-surface-mid bg-surface-low flex-shrink-0" style={{ paddingBottom: "max(1rem, env(safe-area-inset-bottom))" }}>
           <div className="flex gap-2 items-center">
@@ -93,27 +154,6 @@ export default function Chat() {
       <div className="p-4 md:p-6 max-w-2xl mx-auto">
         <div className="flex items-center justify-between mb-5">
           <h1 className="text-2xl font-bold text-foreground font-sans">Chat</h1>
-          <Dialog open={newChatOpen} onOpenChange={setNewChatOpen}>
-            <DialogTrigger asChild>
-              <button className="p-2 rounded-2xl bg-surface-mid hover:bg-surface-high transition-colors">
-                <Plus className="w-5 h-5 text-primary" />
-              </button>
-            </DialogTrigger>
-            <DialogContent className="bg-surface-low border-surface-mid">
-              <DialogHeader><DialogTitle>Nova Conversa</DialogTitle></DialogHeader>
-              <div className="space-y-4">
-                <Input placeholder="Buscar pessoas..." value={searchContact} onChange={e => setSearchContact(e.target.value)} className="bg-surface-mid border-0 rounded-xl text-sm" />
-                <div className="space-y-2">
-                  {filteredContacts.map(c => (
-                    <button key={c.id} onClick={() => { setNewChatOpen(false); setSearchContact(""); }} className="w-full text-left p-3 rounded-xl hover:bg-surface-mid transition-colors">
-                      <p className="font-medium text-foreground text-sm">{c.name}</p>
-                      <p className="text-xs text-muted-foreground">{c.email}</p>
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </DialogContent>
-          </Dialog>
         </div>
 
         <div className="relative mb-4">
@@ -129,26 +169,33 @@ export default function Chat() {
           ))}
         </div>
 
-        <div className="space-y-2">
-          {filtered.map(conv => (
-            <button key={conv.id} onClick={() => setActiveConv(conv)} className="w-full flex items-center gap-3 p-3 rounded-2xl hover:bg-surface-mid active:scale-[0.98] transition-all text-left">
-              <div className="relative flex-shrink-0">
-                <div className="w-11 h-11 rounded-full bg-primary/20 text-primary flex items-center justify-center font-bold text-sm">{conv.avatar}</div>
-                {conv.online && <span className="absolute bottom-0 right-0 w-3 h-3 rounded-full bg-primary border-2 border-background" />}
-              </div>
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center justify-between mb-0.5">
-                  <p className="font-semibold text-foreground text-sm truncate">{conv.name}</p>
-                  <p className="text-xs text-muted-foreground flex-shrink-0 ml-2">{conv.time}</p>
+        {filtered.length === 0 ? (
+          <div className="text-center py-20 text-muted-foreground">
+            <MessageCircle className="w-12 h-12 mx-auto mb-3 opacity-30" />
+            <p className="text-sm font-medium text-foreground mb-1">Nenhuma conversa ainda</p>
+            <p className="text-xs">As conversas criadas pela sua equipe aparecerão aqui.</p>
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {filtered.map(conv => (
+              <button key={conv.id} onClick={() => setActiveConv(conv)} className="w-full flex items-center gap-3 p-3 rounded-2xl hover:bg-surface-mid active:scale-[0.98] transition-all text-left">
+                <div className="relative flex-shrink-0">
+                  <div className="w-11 h-11 rounded-full bg-primary/20 text-primary flex items-center justify-center font-bold text-sm">{conv.avatar}</div>
                 </div>
-                <p className="text-xs text-muted-foreground truncate">{conv.lastMessage}</p>
-              </div>
-              {conv.unread > 0 && (
-                <span className="flex-shrink-0 w-5 h-5 rounded-full bg-primary text-background text-[10px] font-bold flex items-center justify-center">{conv.unread}</span>
-              )}
-            </button>
-          ))}
-        </div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center justify-between mb-0.5">
+                    <p className="font-semibold text-foreground text-sm truncate">{conv.name}</p>
+                    <p className="text-xs text-muted-foreground flex-shrink-0 ml-2">{timeLabel(conv.updatedAt)}</p>
+                  </div>
+                  <p className="text-xs text-muted-foreground truncate">{conv.lastMessage}</p>
+                </div>
+                {conv.unread > 0 && (
+                  <span className="flex-shrink-0 w-5 h-5 rounded-full bg-primary text-background text-[10px] font-bold flex items-center justify-center">{conv.unread}</span>
+                )}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );
