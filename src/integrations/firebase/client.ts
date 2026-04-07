@@ -4,8 +4,10 @@ import {
   GoogleAuthProvider,
 } from "firebase/auth";
 import {
+  initializeFirestore,
   getFirestore,
-  enableIndexedDbPersistence,
+  persistentLocalCache,
+  persistentMultipleTabManager,
 } from "firebase/firestore";
 import { getStorage } from "firebase/storage";
 
@@ -33,21 +35,25 @@ const firebaseConfig = {
 };
 
 // Prevent re-initialization during HMR
-const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0];
+const isFirstInit = getApps().length === 0;
+const app = isFirstInit ? initializeApp(firebaseConfig) : getApps()[0];
 
 export const auth = getAuth(app);
-export const db = getFirestore(app);
+
+// Offline persistence moderna com suporte a múltiplas abas.
+// Em HMR (Vite dev), usa getFirestore() para evitar "already initialized" error.
+export const db = isFirstInit
+  ? initializeFirestore(app, {
+      localCache: persistentLocalCache({
+        tabManager: persistentMultipleTabManager(),
+      }),
+    })
+  : getFirestore(app);
+
 export const storage = getStorage(app);
 export const googleProvider = new GoogleAuthProvider();
 
 // Force account selection every time (best practice de segurança)
 googleProvider.setCustomParameters({ prompt: "select_account" });
-
-// Offline persistence — melhora UX em conexões lentas
-if (typeof window !== "undefined") {
-  enableIndexedDbPersistence(db).catch(() => {
-    // Falha esperada em modo privado do browser — sem problema
-  });
-}
 
 export default app;

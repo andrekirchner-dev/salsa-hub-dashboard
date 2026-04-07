@@ -256,10 +256,10 @@ export default function Team() {
         {userRole && (
           <div className="flex items-center gap-2 mb-4 p-3 bg-primary/5 rounded-2xl border border-primary/20">
             <Info className="w-4 h-4 text-primary flex-shrink-0" />
-            <p className="text-xs text-muted-foreground">
-              Você está como <Badge className={"text-xs inline-flex " + getRoleColor(userRole)}>{userRole}</Badge> —
-              {canFullControl(userRole) ? " acesso completo." : canManageTeam(userRole) ? " pode gerenciar membros e tarefas." : " apenas visualizar."}
-            </p>
+            <span className="text-xs text-muted-foreground">
+              Você está como <Badge className={"text-xs inline-flex " + getRoleColor(userRole)}>{userRole}</Badge>
+              {canFullControl(userRole) ? " — acesso completo." : canManageTeam(userRole) ? " — pode gerenciar membros e tarefas." : " — apenas visualizar."}
+            </span>
           </div>
         )}
 
