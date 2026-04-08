@@ -1,12 +1,14 @@
-import { useState, useEffect } from "react";
-import { ArrowLeft, User, Mail, Phone, Save, LogOut, Bell, Moon, Globe, Lock, ChevronRight, Shield } from "lucide-react";
+import { useState, useEffect, useRef } from "react";
+import { ArrowLeft, User, Mail, Phone, Save, LogOut, Bell, Moon, Globe, Lock, ChevronRight, Shield, Camera } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Progress } from "@/components/ui/progress";
 import { useNavigate } from "react-router-dom";
-import { auth, db } from "@/integrations/firebase/client";
-import { signOut } from "firebase/auth";
+import { auth, db, storage } from "@/integrations/firebase/client";
+import { signOut, updateProfile } from "firebase/auth";
 import { doc, getDoc, updateDoc } from "firebase/firestore";
+import { ref, uploadBytesResumable, getDownloadURL } from "firebase/storage";
 import { useToast } from "@/hooks/use-toast";
 
 const ROLE_COLOR: Record<string, string> = {
@@ -23,12 +25,15 @@ export default function Profile() {
   const { toast } = useToast();
   const currentUser = auth.currentUser;
   const uid = currentUser?.uid ?? "";
+  const avatarInputRef = useRef<HTMLInputElement>(null);
 
   const [name, setName] = useState(currentUser?.displayName ?? "");
   const [phone, setPhone] = useState("");
   const [role, setRole] = useState("");
   const [company, setCompany] = useState("");
   const [saving, setSaving] = useState(false);
+  const [avatarUrl, setAvatarUrl] = useState(currentUser?.photoURL ?? "");
+  const [avatarProgress, setAvatarProgress] = useState<number | null>(null);
 
   const [settings, setSettings] = useState({
     notifications: true,
@@ -45,6 +50,7 @@ export default function Profile() {
         setPhone(d.phone ?? "");
         setRole(d.role ?? "");
         setCompany(d.company ?? "");
+        if (d.avatarUrl) setAvatarUrl(d.avatarUrl);
       }
     });
   }, [uid]);
@@ -58,6 +64,45 @@ export default function Profile() {
     });
     setSaving(false);
     toast({ title: "Perfil atualizado!", description: "Suas informações foram salvas." });
+  };
+
+  const handleAvatarChange = (files: FileList | null) => {
+    if (!files || files.length === 0 || !uid) return;
+    const file = files[0];
+    if (!file.type.startsWith("image/")) {
+      toast({ title: "Formato inválido", description: "Selecione uma imagem (JPG, PNG, WebP).", variant: "destructive" });
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      toast({ title: "Arquivo muito grande", description: "O avatar deve ter no máximo 5MB.", variant: "destructive" });
+      return;
+    }
+
+    const sanitized = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
+    const storageRef = ref(storage, `avatars/${uid}/${Date.now()}_${sanitized}`);
+    const task = uploadBytesResumable(storageRef, file, { contentType: file.type });
+    setAvatarProgress(0);
+
+    task.on(
+      "state_changed",
+      snap => setAvatarProgress(Math.round((snap.bytesTransferred / snap.totalBytes) * 100)),
+      () => {
+        setAvatarProgress(null);
+        toast({ title: "Erro no upload", description: "Tente novamente.", variant: "destructive" });
+      },
+      async () => {
+        const url = await getDownloadURL(task.snapshot.ref);
+        setAvatarUrl(url);
+        setAvatarProgress(null);
+        // Save to Firestore profile and Firebase Auth
+        await Promise.all([
+          updateDoc(doc(db, "profiles", uid), { avatarUrl: url }),
+          updateProfile(currentUser!, { photoURL: url }),
+        ]);
+        toast({ title: "Avatar atualizado!", description: "Nova foto de perfil salva." });
+        if (avatarInputRef.current) avatarInputRef.current.value = "";
+      },
+    );
   };
 
   const handleLogout = async () => {
@@ -98,17 +143,43 @@ export default function Profile() {
 
         <div className="bg-surface-low rounded-3xl p-6 border border-surface-mid mb-4">
           <div className="flex items-center gap-4 mb-6">
-            {currentUser?.photoURL ? (
-              <img src={currentUser.photoURL} alt={name} className="w-16 h-16 rounded-full object-cover flex-shrink-0" />
-            ) : (
-              <div className="w-16 h-16 rounded-full bg-primary/20 text-primary flex items-center justify-center text-2xl font-bold flex-shrink-0">
-                {initials}
-              </div>
-            )}
-            <div>
+
+            {/* Avatar com botão de upload */}
+            <div className="relative flex-shrink-0">
+              {avatarUrl ? (
+                <img src={avatarUrl} alt={name} className="w-16 h-16 rounded-full object-cover" />
+              ) : (
+                <div className="w-16 h-16 rounded-full bg-primary/20 text-primary flex items-center justify-center text-2xl font-bold">
+                  {initials}
+                </div>
+              )}
+              <button
+                onClick={() => avatarInputRef.current?.click()}
+                disabled={avatarProgress !== null}
+                className="absolute -bottom-1 -right-1 w-7 h-7 rounded-full bg-primary text-background flex items-center justify-center shadow-md hover:bg-primary/80 transition-colors disabled:opacity-50"
+                title="Alterar foto"
+              >
+                <Camera className="w-3.5 h-3.5" />
+              </button>
+              <input
+                ref={avatarInputRef}
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={e => handleAvatarChange(e.target.files)}
+              />
+            </div>
+
+            <div className="flex-1 min-w-0">
               <h2 className="text-xl font-bold text-foreground">{name}</h2>
               {role && <Badge className={"text-xs mt-1 " + roleColor}>{role}</Badge>}
               {company && <p className="text-xs text-muted-foreground mt-1">{company}</p>}
+              {avatarProgress !== null && (
+                <div className="mt-2 space-y-1">
+                  <Progress value={avatarProgress} className="h-1.5" />
+                  <p className="text-[10px] text-muted-foreground">Enviando avatar... {avatarProgress}%</p>
+                </div>
+              )}
             </div>
           </div>
 
