@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { auth, db } from "@/integrations/firebase/client";
@@ -259,6 +260,7 @@ export default function TasksManagementPage() {
   const [selectedUser, setSelectedUser] = useState<RegisteredUser | null>(null);
   const [selectedTeam, setSelectedTeam] = useState<TeamItem | null>(null);
   const [userSearchQuery, setUserSearchQuery] = useState("");
+  const [loadingTasks, setLoadingTasks] = useState(true);
   const [loadingAssignData, setLoadingAssignData] = useState(false);
   const [assigning, setAssigning] = useState(false);
 
@@ -273,6 +275,7 @@ export default function TasksManagementPage() {
     if (!uid) return;
     const q = query(collection(db, "users", uid, "tasks"), orderBy("createdAt", "desc"));
     return onSnapshot(q, snap => {
+      setLoadingTasks(false);
       setPersonalTasks(snap.docs.map(d => {
         const data = d.data();
         return {
@@ -498,7 +501,20 @@ export default function TasksManagementPage() {
               ))}
             </div>
 
-            {filteredPersonal.length === 0 ? (
+            {loadingTasks ? (
+              <div className="space-y-3">
+                {[...Array(3)].map((_, i) => (
+                  <div key={i} className="bg-surface-low rounded-2xl p-4 border border-surface-mid space-y-3">
+                    <div className="flex items-center gap-3">
+                      <Skeleton className="w-5 h-5 rounded bg-surface-high flex-shrink-0" />
+                      <Skeleton className="h-4 w-2/5 bg-surface-high" />
+                      <Skeleton className="h-5 w-14 rounded-full bg-surface-high ml-auto" />
+                    </div>
+                    <Skeleton className="h-3 w-3/4 bg-surface-high ml-8" />
+                  </div>
+                ))}
+              </div>
+            ) : filteredPersonal.length === 0 ? (
               <div className="text-center py-16 text-muted-foreground">
                 <ListTodo className="w-10 h-10 mx-auto mb-3 opacity-30" />
                 <p className="text-sm font-medium text-foreground mb-1">

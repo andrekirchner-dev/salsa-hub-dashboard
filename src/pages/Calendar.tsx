@@ -4,6 +4,7 @@ import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger,
 } from "@/components/ui/dialog";
@@ -156,9 +157,17 @@ export default function Calendar() {
         </div>
 
         {loading ? (
-          <div className="text-center py-16 text-muted-foreground">
-            <div className="w-6 h-6 border-2 border-primary/40 border-t-primary rounded-full animate-spin mx-auto mb-3" />
-            <p className="text-sm">Carregando reuniões...</p>
+          <div className="space-y-3">
+            {[...Array(3)].map((_, i) => (
+              <div key={i} className="bg-surface-low rounded-2xl p-4 border border-surface-mid flex gap-3">
+                <Skeleton className="w-10 h-10 rounded-xl flex-shrink-0 bg-surface-high" />
+                <div className="flex-1 space-y-2">
+                  <Skeleton className="h-4 w-1/2 bg-surface-high" />
+                  <Skeleton className="h-3 w-1/3 bg-surface-high" />
+                </div>
+                <Skeleton className="h-6 w-16 rounded-full bg-surface-high" />
+              </div>
+            ))}
           </div>
         ) : todayMeetings.length === 0 ? (
           <div className="text-center py-16 text-muted-foreground">

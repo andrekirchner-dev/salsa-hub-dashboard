@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { useNavigate, Link } from "react-router-dom";
+import { Skeleton } from "@/components/ui/skeleton";
 import { TrendingUp, Calendar, Package, Users, ChevronDown, ChevronUp, ListTodo, Plus, Trash2 } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
@@ -48,6 +49,7 @@ export default function Index() {
   const [newLabel, setNewLabel] = useState("");
   const [newPriority, setNewPriority] = useState<"Alta" | "Media" | "Baixa">("Media");
   const [stats, setStats] = useState({ campaigns: 0, meetings: 0, products: 0, leads: 0 });
+  const [statsLoading, setStatsLoading] = useState(true);
   const [recentProducts, setRecentProducts] = useState<{ id: string; name: string; type: string; progress: number }[]>([]);
 
   const now = new Date();
@@ -90,6 +92,7 @@ export default function Index() {
           progress: d.data().progress ?? 0,
         }))
       );
+      setStatsLoading(false);
     }
     loadStats();
   }, [uid]);
@@ -217,7 +220,15 @@ export default function Index() {
 
       {/* Stat Cards */}
       <div className="grid grid-cols-2 gap-3">
-        {statCards.map(card => {
+        {statsLoading ? (
+          [...Array(4)].map((_, i) => (
+            <div key={i} className="bg-surface-low rounded-3xl p-4 border border-surface-mid space-y-3">
+              <Skeleton className="w-9 h-9 rounded-2xl bg-surface-high" />
+              <Skeleton className="h-7 w-12 bg-surface-high" />
+              <Skeleton className="h-3 w-3/4 bg-surface-high" />
+            </div>
+          ))
+        ) : statCards.map(card => {
           const Icon = card.icon;
           return (
             <button key={card.label} onClick={() => navigate(card.route)} className="bg-surface-low rounded-3xl p-4 border border-surface-mid hover:bg-surface-mid active:scale-95 transition-all text-left">

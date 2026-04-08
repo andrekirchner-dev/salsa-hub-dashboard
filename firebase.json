@@ -2,10 +2,7 @@
   "firestore": {
     "rules": "firestore.rules"
   },
-  "storage": {
-    "rules": "storage.rules"
-  },
-  "hosting": {
+"hosting": {
     "public": "dist",
     "ignore": [
       "firebase.json",

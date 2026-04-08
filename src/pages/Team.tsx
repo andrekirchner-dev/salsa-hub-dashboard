@@ -3,6 +3,7 @@ import { ArrowLeft, Plus, Trash2, Info, Search, Mail, UserPlus, Loader2, Check }
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
+import { Skeleton } from "@/components/ui/skeleton";
 import { useNavigate } from "react-router-dom";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -264,9 +265,17 @@ export default function Team() {
         )}
 
         {loading ? (
-          <div className="text-center py-16 text-muted-foreground">
-            <div className="w-6 h-6 border-2 border-primary/40 border-t-primary rounded-full animate-spin mx-auto mb-3" />
-            <p className="text-sm">Carregando equipes...</p>
+          <div className="space-y-3">
+            {[...Array(3)].map((_, i) => (
+              <div key={i} className="bg-surface-low rounded-2xl p-4 border border-surface-mid flex items-center gap-3">
+                <Skeleton className="w-10 h-10 rounded-2xl flex-shrink-0 bg-surface-high" />
+                <div className="flex-1 space-y-2">
+                  <Skeleton className="h-4 w-1/3 bg-surface-high" />
+                  <Skeleton className="h-3 w-1/4 bg-surface-high" />
+                </div>
+                <Skeleton className="h-8 w-8 rounded-xl bg-surface-high" />
+              </div>
+            ))}
           </div>
         ) : teams.length === 0 ? (
           <div className="text-center py-16 text-muted-foreground">
@@ -343,7 +352,18 @@ export default function Team() {
                       )}
 
                       {memberLoading ? (
-                        <div className="text-center py-8"><div className="w-5 h-5 border-2 border-primary/40 border-t-primary rounded-full animate-spin mx-auto" /></div>
+                        <div className="space-y-2 py-2">
+                          {[...Array(3)].map((_, i) => (
+                            <div key={i} className="flex items-center gap-3 p-2">
+                              <Skeleton className="w-8 h-8 rounded-full flex-shrink-0 bg-surface-high" />
+                              <div className="flex-1 space-y-1">
+                                <Skeleton className="h-3 w-1/3 bg-surface-high" />
+                                <Skeleton className="h-3 w-1/2 bg-surface-high" />
+                              </div>
+                              <Skeleton className="h-5 w-16 rounded-full bg-surface-high" />
+                            </div>
+                          ))}
+                        </div>
                       ) : members.length === 0 ? (
                         <p className="text-sm text-muted-foreground text-center py-6">
                           Nenhum membro ainda.{canManageTeam(userRole) ? " Use o botão Convidar para adicionar!" : ""}
