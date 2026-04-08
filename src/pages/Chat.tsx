@@ -20,6 +20,7 @@ interface UserProfile {
   name: string;
   email: string;
   role: string;
+  username?: string;
 }
 
 interface Conversation {
@@ -243,10 +244,15 @@ export default function Chat() {
     return matchSearch && matchFilter;
   });
 
-  const filteredUsers = allUsers.filter(u =>
-    u.name?.toLowerCase().includes(userSearch.toLowerCase()) ||
-    u.email?.toLowerCase().includes(userSearch.toLowerCase())
-  );
+  // @username search: require @ prefix, strip it and match against name/username
+  const atSearch = userSearch.startsWith("@") ? userSearch.slice(1).toLowerCase() : "";
+  const filteredUsers = atSearch.length > 0
+    ? allUsers.filter(u => {
+        const handle = (u.username ?? u.name ?? "").toLowerCase();
+        const displayName = (u.name ?? "").toLowerCase();
+        return handle.includes(atSearch) || displayName.includes(atSearch);
+      })
+    : [];
 
   // ── Active conversation view ───────────────────────────────────────────────
   if (activeConv) {
@@ -435,7 +441,7 @@ export default function Chat() {
           </DialogHeader>
           <div className="relative mb-3">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-            <Input placeholder="Buscar por nome ou email..." value={userSearch}
+            <Input placeholder="@username para buscar..." value={userSearch}
               onChange={e => setUserSearch(e.target.value)}
               className="pl-10 bg-surface-mid border-0 rounded-xl text-sm" autoFocus />
           </div>
@@ -445,9 +451,15 @@ export default function Chat() {
                 <Loader2 className="w-4 h-4 animate-spin" />
                 <span className="text-sm">Buscando usuários...</span>
               </div>
+            ) : !userSearch.startsWith("@") ? (
+              <div className="text-center py-8 text-muted-foreground px-2">
+                <Search className="w-8 h-8 mx-auto mb-2 opacity-30" />
+                <p className="text-sm font-medium text-foreground mb-1">Buscar por @username</p>
+                <p className="text-xs">Digite <code className="bg-surface-mid px-1 py-0.5 rounded text-primary font-mono">@nome</code> para encontrar um usuário</p>
+              </div>
             ) : filteredUsers.length === 0 ? (
               <div className="text-center py-8 text-muted-foreground">
-                <p className="text-sm">{userSearch ? "Nenhum usuário encontrado." : "Nenhum outro usuário registrado ainda."}</p>
+                <p className="text-sm">Nenhum usuário encontrado para <span className="text-primary font-mono">{userSearch}</span></p>
               </div>
             ) : (
               filteredUsers.map(user => (
@@ -459,7 +471,10 @@ export default function Chat() {
                   </div>
                   <div className="flex-1 min-w-0">
                     <p className="font-medium text-foreground text-sm truncate">{user.name}</p>
-                    <p className="text-xs text-muted-foreground truncate">{user.role} · {user.email}</p>
+                    <p className="text-xs text-muted-foreground truncate">
+                      <span className="text-primary font-mono">@{(user.username ?? user.name ?? "").toLowerCase().replace(/\s+/g, "")}</span>
+                      {user.role ? ` · ${user.role}` : ""}
+                    </p>
                   </div>
                   {creatingConv && <Loader2 className="w-4 h-4 animate-spin text-primary flex-shrink-0" />}
                 </button>

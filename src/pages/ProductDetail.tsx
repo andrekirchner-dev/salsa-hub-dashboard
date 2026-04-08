@@ -1,9 +1,9 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import {
   ArrowLeft, ChevronDown, ChevronUp, Upload, Plus, Trash2, Download,
   FileText, Image, File, CheckSquare, FolderOpen, BookOpen,
-  Palette, Search, Users, Activity, Settings, AlertTriangle
+  Palette, Search, Users, Activity, Settings, AlertTriangle, X
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -14,7 +14,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { auth, db } from "@/integrations/firebase/client";
 import {
   doc, getDoc, collection, onSnapshot, addDoc, deleteDoc,
-  updateDoc, query, orderBy, serverTimestamp,
+  updateDoc, query, orderBy, serverTimestamp, writeBatch,
 } from "firebase/firestore";
 
 interface TaskCard { id: string; title: string; status: "COMPLETA" | "ATIVA" | "BLOQUEADA" | "MILESTONE"; }
@@ -29,6 +29,8 @@ interface Product {
   description?: string;
   launchDate?: string;
   budget?: string;
+  logoUrl?: string;
+  colors?: { primary: string; secondary: string; accent: string };
 }
 
 const getTaskStyle = (status: TaskCard["status"]) => {
@@ -82,6 +84,18 @@ export default function ProductDetail() {
   const [newMemberName, setNewMemberName] = useState("");
   const [newMemberRole, setNewMemberRole] = useState("");
 
+  // Color palette state
+  const [colorPalette, setColorPalette] = useState([
+    { label: "Primária",   key: "primary",   color: "#91f78e" },
+    { label: "Secundária", key: "secondary", color: "#2563eb" },
+    { label: "Accent",     key: "accent",    color: "#f59e0b" },
+  ]);
+  const colorRefs = useRef<(HTMLInputElement | null)[]>([]);
+
+  // Logo state
+  const logoInputRef = useRef<HTMLInputElement>(null);
+  const [logoPreview, setLogoPreview] = useState<string | null>(null);
+
   const toggleSection = (id: string) =>
     setOpenSections(prev => prev.includes(id) ? prev.filter(s => s !== id) : [...prev, id]);
   const isOpen = (id: string) => openSections.includes(id);
@@ -94,6 +108,13 @@ export default function ProductDetail() {
         const d = snap.data() as Product;
         setProduct(d);
         setDescription(d.description ?? "");
+        if (d.logoUrl) setLogoPreview(d.logoUrl);
+        if (d.colors) {
+          setColorPalette(prev => prev.map(c => ({
+            ...c,
+            color: (d.colors as any)?.[c.key] ?? c.color,
+          })));
+        }
       }
     });
   }, [uid, productId]);
@@ -122,18 +143,14 @@ export default function ProductDetail() {
   const logActivity = async (action: string) => {
     if (!uid || !productId) return;
     await addDoc(collection(db, "users", uid, "products", productId, "activity"), {
-      action,
-      user: userName,
-      createdAt: serverTimestamp(),
+      action, user: userName, createdAt: serverTimestamp(),
     });
   };
 
   const handleAddTask = async () => {
     if (!newTaskTitle.trim() || !uid || !productId) return;
     await addDoc(collection(db, "users", uid, "products", productId, "tasks"), {
-      title: newTaskTitle.trim(),
-      status: newTaskStatus,
-      createdAt: serverTimestamp(),
+      title: newTaskTitle.trim(), status: newTaskStatus, createdAt: serverTimestamp(),
     });
     await logActivity(`Tarefa adicionada: ${newTaskTitle.trim()}`);
     setNewTaskTitle("");
@@ -148,9 +165,7 @@ export default function ProductDetail() {
   const handleAddMember = async () => {
     if (!newMemberName.trim() || !uid || !productId) return;
     await addDoc(collection(db, "users", uid, "products", productId, "team"), {
-      name: newMemberName.trim(),
-      role: newMemberRole.trim(),
-      createdAt: serverTimestamp(),
+      name: newMemberName.trim(), role: newMemberRole.trim(), createdAt: serverTimestamp(),
     });
     await logActivity(`Membro adicionado: ${newMemberName.trim()}`);
     setNewMemberName(""); setNewMemberRole("");
@@ -160,6 +175,41 @@ export default function ProductDetail() {
     if (!uid || !productId) return;
     await updateDoc(doc(db, "users", uid, "products", productId), { description });
     await logActivity("Descrição atualizada");
+  };
+
+  // Clear all activity
+  const handleClearActivity = async () => {
+    if (!uid || !productId || activity.length === 0) return;
+    const batch = writeBatch(db);
+    activity.forEach(item => {
+      batch.delete(doc(db, "users", uid, "products", productId, "activity", item.id));
+    });
+    await batch.commit();
+  };
+
+  // Save colors to Firestore
+  const handleColorChange = async (idx: number, newColor: string) => {
+    const updated = colorPalette.map((c, i) => i === idx ? { ...c, color: newColor } : c);
+    setColorPalette(updated);
+    if (!uid || !productId) return;
+    const colors = Object.fromEntries(updated.map(c => [c.key, c.color]));
+    await updateDoc(doc(db, "users", uid, "products", productId), { colors });
+  };
+
+  // Logo upload
+  const handleLogoChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = async (ev) => {
+      const url = ev.target?.result as string;
+      setLogoPreview(url);
+      if (uid && productId) {
+        await updateDoc(doc(db, "users", uid, "products", productId), { logoUrl: url });
+        await logActivity("Logo atualizada");
+      }
+    };
+    reader.readAsDataURL(file);
   };
 
   const activeTasks = tasks.filter(t => t.status === "ATIVA").length;
@@ -290,24 +340,79 @@ export default function ProductDetail() {
 
         {/* IDENTIDADE VISUAL */}
         <DrawerSection id="identity" icon={Palette} title="Identidade Visual" open={isOpen("identity")} onToggle={toggleSection}>
-          <div className="space-y-4">
+          <div className="space-y-5">
+            {/* Logo */}
             <div>
               <p className="text-xs text-muted-foreground mb-2 font-medium">Logo</p>
-              <div className="border-2 border-dashed border-surface-high rounded-2xl p-6 text-center hover:border-primary/50 cursor-pointer">
-                <Upload className="w-5 h-5 text-muted-foreground mx-auto mb-1" />
-                <p className="text-xs text-muted-foreground">Arraste sua logo aqui</p>
+              <div
+                className="border-2 border-dashed border-surface-high rounded-2xl p-6 text-center hover:border-primary/50 cursor-pointer transition-colors relative"
+                onClick={() => logoInputRef.current?.click()}
+                onDragOver={e => { e.preventDefault(); e.currentTarget.classList.add("border-primary/70"); }}
+                onDragLeave={e => e.currentTarget.classList.remove("border-primary/70")}
+                onDrop={e => {
+                  e.preventDefault();
+                  e.currentTarget.classList.remove("border-primary/70");
+                  const file = e.dataTransfer.files[0];
+                  if (file) {
+                    const dt = new DataTransfer();
+                    dt.items.add(file);
+                    if (logoInputRef.current) {
+                      logoInputRef.current.files = dt.files;
+                      logoInputRef.current.dispatchEvent(new Event("change", { bubbles: true }));
+                    }
+                  }
+                }}
+              >
+                {logoPreview ? (
+                  <div className="relative inline-block">
+                    <img src={logoPreview} alt="Logo" className="w-20 h-20 mx-auto object-contain rounded-xl mb-2" />
+                    <button
+                      onClick={e => { e.stopPropagation(); setLogoPreview(null); if (uid && productId) updateDoc(doc(db, "users", uid, "products", productId), { logoUrl: "" }); }}
+                      className="absolute -top-2 -right-2 w-5 h-5 rounded-full bg-red-500/80 text-white flex items-center justify-center hover:bg-red-500"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                    <p className="text-xs text-muted-foreground">Clique para trocar</p>
+                  </div>
+                ) : (
+                  <>
+                    <Upload className="w-5 h-5 text-muted-foreground mx-auto mb-1" />
+                    <p className="text-xs text-foreground font-medium">Clique ou arraste sua logo aqui</p>
+                    <p className="text-[10px] text-muted-foreground mt-0.5">PNG, SVG, JPG até 5MB</p>
+                  </>
+                )}
+                <input
+                  ref={logoInputRef}
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={handleLogoChange}
+                />
               </div>
             </div>
+
+            {/* Color Palette */}
             <div>
               <p className="text-xs text-muted-foreground mb-3 font-medium">Paleta de Cores</p>
-              <div className="grid grid-cols-3 gap-3">
-                {[["Primária", "#91f78e"], ["Secundária", "#2563eb"], ["Accent", "#f59e0b"]].map(([label, color]) => (
-                  <div key={label}>
-                    <p className="text-[10px] text-muted-foreground mb-1">{label}</p>
-                    <div className="flex gap-2 items-center">
-                      <input type="color" defaultValue={color} className="w-8 h-8 rounded-lg cursor-pointer border-0" />
-                      <span className="text-xs text-muted-foreground">{color}</span>
-                    </div>
+              <div className="grid grid-cols-3 gap-4">
+                {colorPalette.map((item, i) => (
+                  <div key={item.key} className="flex flex-col items-center gap-2">
+                    <p className="text-[10px] text-muted-foreground self-start">{item.label}</p>
+                    {/* Full-fill color circle */}
+                    <label
+                      className="w-12 h-12 rounded-full cursor-pointer relative overflow-hidden border-2 border-surface-high hover:border-primary/60 transition-colors shadow-sm"
+                      style={{ backgroundColor: item.color }}
+                      title={`Escolher cor ${item.label}`}
+                    >
+                      <input
+                        ref={el => { colorRefs.current[i] = el; }}
+                        type="color"
+                        value={item.color}
+                        onChange={e => handleColorChange(i, e.target.value)}
+                        className="opacity-0 absolute inset-0 w-full h-full cursor-pointer"
+                      />
+                    </label>
+                    <span className="text-[10px] text-muted-foreground font-mono">{item.color}</span>
                   </div>
                 ))}
               </div>
@@ -355,6 +460,17 @@ export default function ProductDetail() {
 
         {/* ATIVIDADE */}
         <DrawerSection id="activity" icon={Activity} title="Atividade Recente" badge={activity.length} open={isOpen("activity")} onToggle={toggleSection}>
+          {activity.length > 0 && (
+            <div className="flex justify-end mb-3">
+              <button
+                onClick={handleClearActivity}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-red-500/10 hover:bg-red-500/20 text-red-400 text-xs transition-colors"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                Limpar atividades
+              </button>
+            </div>
+          )}
           {activity.length === 0 ? (
             <p className="text-sm text-muted-foreground text-center py-4">Nenhuma atividade registrada ainda.</p>
           ) : (

@@ -1,10 +1,15 @@
-import { MessageCircle, Package, Users, User, ListTodo } from "lucide-react";
+import { MessageCircle, Package, User, ListTodo, Shield } from "lucide-react";
 import { Link, useLocation } from "react-router-dom";
+import { auth } from "@/integrations/firebase/client";
+
+const OWNER_EMAIL = "kirchner.andre@gmail.com";
 
 export function MobileNav() {
   const location = useLocation();
   const isActive = (url: string) =>
     url === "/" ? location.pathname === "/" : location.pathname.startsWith(url);
+
+  const isOwner = auth.currentUser?.email === OWNER_EMAIL;
 
   return (
     <nav
@@ -35,7 +40,7 @@ export function MobileNav() {
           <span className="text-[10px] font-medium">Chat</span>
         </Link>
 
-        {/* Center Home Button — stays inside the nav bar */}
+        {/* Center Home Button */}
         <Link
           to="/"
           className="flex flex-col items-center justify-center w-14 h-14 rounded-full bg-primary shadow-lg shadow-primary/30 transition-transform active:scale-95 flex-shrink-0"
@@ -54,16 +59,28 @@ export function MobileNav() {
           <span className="text-[10px] font-medium">Tarefas</span>
         </Link>
 
-        {/* Perfil */}
-        <Link
-          to="/profile"
-          className={`flex flex-col items-center gap-1 p-2 rounded-2xl transition-colors min-w-[48px] ${
-            isActive("/profile") ? "text-primary" : "text-muted-foreground"
-          }`}
-        >
-          <User className="w-5 h-5" />
-          <span className="text-[10px] font-medium">Perfil</span>
-        </Link>
+        {/* Admin (owner only) or Perfil */}
+        {isOwner ? (
+          <Link
+            to="/admin"
+            className={`flex flex-col items-center gap-1 p-2 rounded-2xl transition-colors min-w-[48px] ${
+              isActive("/admin") ? "text-primary" : "text-primary/60"
+            }`}
+          >
+            <Shield className="w-5 h-5" />
+            <span className="text-[10px] font-medium">Admin</span>
+          </Link>
+        ) : (
+          <Link
+            to="/profile"
+            className={`flex flex-col items-center gap-1 p-2 rounded-2xl transition-colors min-w-[48px] ${
+              isActive("/profile") ? "text-primary" : "text-muted-foreground"
+            }`}
+          >
+            <User className="w-5 h-5" />
+            <span className="text-[10px] font-medium">Perfil</span>
+          </Link>
+        )}
 
       </div>
     </nav>
