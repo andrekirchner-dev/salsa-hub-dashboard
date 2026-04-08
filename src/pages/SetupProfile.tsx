@@ -1,7 +1,8 @@
 import { useState } from "react";
 import { signOut } from "firebase/auth";
 import {
-  doc, getDoc, setDoc, updateDoc, serverTimestamp,
+  doc, setDoc, updateDoc, serverTimestamp,
+  collection, query, where, getDocs, increment,
 } from "firebase/firestore";
 import type { User } from "firebase/auth";
 import { auth, db } from "@/integrations/firebase/client";
@@ -46,26 +47,33 @@ export default function SetupProfile({ user, onComplete }: Props) {
     const code = cargoCode.trim().toUpperCase();
 
     try {
-      // Validate cargo code in Firestore
-      const codeRef = doc(db, "cargoCodes", code);
-      const codeSnap = await getDoc(codeRef);
+      // Validate code in roleCodes collection (managed by Admin Panel)
+      const codesSnap = await getDocs(
+        query(collection(db, "roleCodes"), where("code", "==", code), where("active", "==", true))
+      );
 
-      if (!codeSnap.exists()) {
-        setError("Código de cargo inválido. Solicite um código à equipe ADM.");
+      if (codesSnap.empty) {
+        setError("Código de cargo inválido ou inativo. Solicite um código à equipe ADM.");
         setLoading(false);
         return;
       }
 
-      const codeData = codeSnap.data();
-      if (codeData.used) {
-        setError("Este código já foi utilizado. Solicite um novo código.");
+      const codeDoc = codesSnap.docs[0];
+      const codeData = codeDoc.data();
+
+      if (codeData.maxUses > 0 && codeData.usedCount >= codeData.maxUses) {
+        setError("Este código já atingiu o limite de usos. Solicite um novo código.");
         setLoading(false);
         return;
       }
+
+      // Generate username from name: lowercase, spaces → dots, remove special chars
+      const username = name.trim().toLowerCase().replace(/\s+/g, ".").replace(/[^a-z0-9._]/g, "");
 
       // Create/update profile document
       await setDoc(doc(db, "profiles", user.uid), {
         name: name.trim(),
+        username,
         email: user.email,
         phone: phone.trim(),
         cargoCode: code,
@@ -75,11 +83,9 @@ export default function SetupProfile({ user, onComplete }: Props) {
         updatedAt: serverTimestamp(),
       });
 
-      // Mark cargo code as used
-      await updateDoc(codeRef, {
-        used: true,
-        usedBy: user.uid,
-        usedAt: serverTimestamp(),
+      // Increment usage count on the role code
+      await updateDoc(doc(db, "roleCodes", codeDoc.id), {
+        usedCount: increment(1),
       });
 
       onComplete();

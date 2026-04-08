@@ -58,8 +58,10 @@ export default function Profile() {
   const handleSave = async () => {
     if (!uid) return;
     setSaving(true);
+    const username = name.trim().toLowerCase().replace(/\s+/g, ".").replace(/[^a-z0-9._]/g, "");
     await updateDoc(doc(db, "profiles", uid), {
       name: name.trim(),
+      username,
       phone: phone.trim(),
     });
     setSaving(false);

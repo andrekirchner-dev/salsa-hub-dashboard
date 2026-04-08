@@ -1,7 +1,7 @@
 import { lazy, Suspense, useEffect, useState } from "react";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { onAuthStateChanged } from "firebase/auth";
-import { doc, getDoc, collection, query, where, getDocs, addDoc, serverTimestamp } from "firebase/firestore";
+import { doc, getDoc, updateDoc, collection, query, where, getDocs, addDoc, serverTimestamp } from "firebase/firestore";
 import type { User } from "firebase/auth";
 import { auth, db } from "@/integrations/firebase/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -55,6 +55,14 @@ const App = () => {
         const data = profileDoc.data();
         const complete = !!(data?.name && data?.role);
         setProfile({ complete, loading: false });
+
+        // Backfill username for existing users who don't have one yet
+        if (complete && data?.name && !data?.username) {
+          const username = data.name.trim().toLowerCase().replace(/\s+/g, ".").replace(/[^a-z0-9._]/g, "");
+          try {
+            await updateDoc(doc(db, "profiles", firebaseUser.uid), { username });
+          } catch { /* non-critical, ignore */ }
+        }
 
         // ── Check for pending invites by email ───────────────────────────────
         if (complete && firebaseUser.email) {

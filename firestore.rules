@@ -11,12 +11,27 @@ service cloud.firestore {
       return isAuthenticated() && request.auth.uid == uid;
     }
 
-    // ── Códigos de cargo ──────────────────────────────────────────────────────
-    // Autenticados podem ler para validar no SetupProfile.
-    // Escrita apenas via Firebase Console (admin).
+    // ── Códigos de cargo (legado) ─────────────────────────────────────────────
     match /cargoCodes/{code} {
       allow read: if isAuthenticated();
       allow write: if false;
+    }
+
+    // ── Role Codes (Admin Panel) ──────────────────────────────────────────────
+    // Qualquer autenticado pode LER para validar no SetupProfile.
+    // Apenas o owner (kirchner.andre@gmail.com) pode escrever.
+    function isAppOwner() {
+      return isAuthenticated() && request.auth.token.email == "kirchner.andre@gmail.com";
+    }
+
+    match /roleCodes/{codeId} {
+      allow read: if isAuthenticated();
+      allow create, delete: if isAppOwner();
+      allow update: if isAppOwner() || (
+        // Allow incrementing usedCount during profile setup
+        isAuthenticated() &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(["usedCount"])
+      );
     }
 
     // ── Perfis de usuário ─────────────────────────────────────────────────────
