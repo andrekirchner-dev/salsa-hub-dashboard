@@ -3,7 +3,8 @@ import { useNavigate, useParams } from "react-router-dom";
 import {
   ArrowLeft, ChevronDown, ChevronUp, Upload, Plus, Trash2, Download,
   FileText, Image, File, CheckSquare, FolderOpen, BookOpen,
-  Palette, Search, Users, Activity, Settings, AlertTriangle, X
+  Palette, Search, Users, Activity, Settings, AlertTriangle, X,
+  Globe, TrendingUp, BarChart2, Megaphone, Target, DollarSign
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -32,6 +33,13 @@ interface Product {
   budget?: string;
   logoUrl?: string;
   colors?: { primary: string; secondary: string; accent: string };
+  mercado?: string;
+  tendenciaComportamento?: string;
+  tendenciaConteudo?: string;
+  concorrentes?: string;
+  tendenciaMarketing?: string;
+  demografico?: string;
+  preco?: number;
 }
 
 const getTaskStyle = (status: TaskCard["status"]) => {
@@ -99,6 +107,24 @@ export default function ProductDetail() {
   const [logoUploading, setLogoUploading] = useState(false);
   const [logoProgress, setLogoProgress] = useState(0);
 
+  // Market intelligence fields
+  const [mercado, setMercado] = useState("");
+  const [tendenciaComportamento, setTendenciaComportamento] = useState("");
+  const [tendenciaConteudo, setTendenciaConteudo] = useState("");
+  const [concorrentes, setConcorrentes] = useState("");
+  const [tendenciaMarketing, setTendenciaMarketing] = useState("");
+  const [demografico, setDemografico] = useState("");
+  const [preco, setPreco] = useState(0);
+  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const saveField = (field: string, value: string | number) => {
+    if (!uid || !productId) return;
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(() => {
+      updateDoc(doc(db, "users", uid, "products", productId), { [field]: value });
+    }, 800);
+  };
+
   const toggleSection = (id: string) =>
     setOpenSections(prev => prev.includes(id) ? prev.filter(s => s !== id) : [...prev, id]);
   const isOpen = (id: string) => openSections.includes(id);
@@ -112,6 +138,13 @@ export default function ProductDetail() {
         setProduct(d);
         setDescription(d.description ?? "");
         if (d.logoUrl) setLogoPreview(d.logoUrl);
+        setMercado(d.mercado ?? "");
+        setTendenciaComportamento(d.tendenciaComportamento ?? "");
+        setTendenciaConteudo(d.tendenciaConteudo ?? "");
+        setConcorrentes(d.concorrentes ?? "");
+        setTendenciaMarketing(d.tendenciaMarketing ?? "");
+        setDemografico(d.demografico ?? "");
+        setPreco(d.preco ?? 0);
         if (d.colors) {
           setColorPalette(prev => prev.map(c => ({
             ...c,
@@ -588,6 +621,99 @@ export default function ProductDetail() {
             )}
           </div>
         </DrawerSection>
+
+        {/* ── Inteligência de Mercado ───────────────────────────────── */}
+        <DrawerSection id="mercado" icon={Globe} title="Definição de Mercado" open={isOpen("mercado")} onToggle={toggleSection}>
+          <textarea
+            value={mercado}
+            onChange={e => { setMercado(e.target.value); saveField("mercado", e.target.value); }}
+            placeholder="Descreva o mercado-alvo, tamanho, oportunidades e posicionamento..."
+            className="w-full h-32 bg-surface-mid rounded-xl p-3 text-sm text-foreground placeholder:text-muted-foreground resize-none border-0 outline-none focus:ring-1 focus:ring-primary/40"
+          />
+        </DrawerSection>
+
+        <DrawerSection id="tendenciaComportamento" icon={TrendingUp} title="Tendências de Comportamento" open={isOpen("tendenciaComportamento")} onToggle={toggleSection}>
+          <textarea
+            value={tendenciaComportamento}
+            onChange={e => { setTendenciaComportamento(e.target.value); saveField("tendenciaComportamento", e.target.value); }}
+            placeholder="Mudanças no comportamento do consumidor, hábitos emergentes..."
+            className="w-full h-32 bg-surface-mid rounded-xl p-3 text-sm text-foreground placeholder:text-muted-foreground resize-none border-0 outline-none focus:ring-1 focus:ring-primary/40"
+          />
+        </DrawerSection>
+
+        <DrawerSection id="tendenciaConteudo" icon={FileText} title="Tendências de Conteúdo" open={isOpen("tendenciaConteudo")} onToggle={toggleSection}>
+          <textarea
+            value={tendenciaConteudo}
+            onChange={e => { setTendenciaConteudo(e.target.value); saveField("tendenciaConteudo", e.target.value); }}
+            placeholder="Formatos em alta, temas relevantes, linguagem do setor..."
+            className="w-full h-32 bg-surface-mid rounded-xl p-3 text-sm text-foreground placeholder:text-muted-foreground resize-none border-0 outline-none focus:ring-1 focus:ring-primary/40"
+          />
+        </DrawerSection>
+
+        <DrawerSection id="concorrentes" icon={BarChart2} title="Análise de Concorrentes" open={isOpen("concorrentes")} onToggle={toggleSection}>
+          <textarea
+            value={concorrentes}
+            onChange={e => { setConcorrentes(e.target.value); saveField("concorrentes", e.target.value); }}
+            placeholder="Principais concorrentes, diferenciais, pontos fracos e fortes..."
+            className="w-full h-32 bg-surface-mid rounded-xl p-3 text-sm text-foreground placeholder:text-muted-foreground resize-none border-0 outline-none focus:ring-1 focus:ring-primary/40"
+          />
+        </DrawerSection>
+
+        <DrawerSection id="tendenciaMarketing" icon={Megaphone} title="Tendências de Marketing" open={isOpen("tendenciaMarketing")} onToggle={toggleSection}>
+          <textarea
+            value={tendenciaMarketing}
+            onChange={e => { setTendenciaMarketing(e.target.value); saveField("tendenciaMarketing", e.target.value); }}
+            placeholder="Canais em crescimento, estratégias eficazes, benchmarks do setor..."
+            className="w-full h-32 bg-surface-mid rounded-xl p-3 text-sm text-foreground placeholder:text-muted-foreground resize-none border-0 outline-none focus:ring-1 focus:ring-primary/40"
+          />
+        </DrawerSection>
+
+        <DrawerSection id="demografico" icon={Target} title="Definição Demográfica" open={isOpen("demografico")} onToggle={toggleSection}>
+          <textarea
+            value={demografico}
+            onChange={e => { setDemografico(e.target.value); saveField("demografico", e.target.value); }}
+            placeholder="Idade, gênero, renda, localização, escolaridade, estilo de vida..."
+            className="w-full h-32 bg-surface-mid rounded-xl p-3 text-sm text-foreground placeholder:text-muted-foreground resize-none border-0 outline-none focus:ring-1 focus:ring-primary/40"
+          />
+        </DrawerSection>
+
+        <DrawerSection id="preco" icon={DollarSign} title="Precificação" open={isOpen("preco")} onToggle={toggleSection}>
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <span className="text-xs text-muted-foreground">R$ 0</span>
+              <span className="text-lg font-bold text-primary">
+                {preco.toLocaleString("pt-BR", { style: "currency", currency: "BRL", minimumFractionDigits: 0 })}
+              </span>
+              <span className="text-xs text-muted-foreground">R$ 20.000</span>
+            </div>
+            <div className="relative px-1">
+              <input
+                type="range"
+                min={0}
+                max={20000}
+                step={50}
+                value={preco}
+                onChange={e => { const v = Number(e.target.value); setPreco(v); saveField("preco", v); }}
+                className="w-full h-2 rounded-full appearance-none cursor-pointer"
+                style={{
+                  background: `linear-gradient(to right, hsl(var(--primary)) 0%, hsl(var(--primary)) ${(preco / 20000) * 100}%, hsl(var(--surface-high)) ${(preco / 20000) * 100}%, hsl(var(--surface-high)) 100%)`
+                }}
+              />
+            </div>
+            <div className="flex gap-2 flex-wrap">
+              {[99, 297, 497, 997, 1997, 4997, 9997].map(v => (
+                <button
+                  key={v}
+                  onClick={() => { setPreco(v); saveField("preco", v); }}
+                  className={"px-2.5 py-1 rounded-lg text-xs font-medium transition-colors " + (preco === v ? "bg-primary text-background" : "bg-surface-mid text-muted-foreground hover:bg-surface-high")}
+                >
+                  {v.toLocaleString("pt-BR", { style: "currency", currency: "BRL", minimumFractionDigits: 0 })}
+                </button>
+              ))}
+            </div>
+          </div>
+        </DrawerSection>
+
       </div>
     </div>
   );
