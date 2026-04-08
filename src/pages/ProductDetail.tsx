@@ -11,11 +11,12 @@ import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import { Progress } from "@/components/ui/progress";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { auth, db } from "@/integrations/firebase/client";
+import { auth, db, storage } from "@/integrations/firebase/client";
 import {
   doc, getDoc, collection, onSnapshot, addDoc, deleteDoc,
   updateDoc, query, orderBy, serverTimestamp, writeBatch,
 } from "firebase/firestore";
+import { ref, uploadBytesResumable, getDownloadURL } from "firebase/storage";
 
 interface TaskCard { id: string; title: string; status: "COMPLETA" | "ATIVA" | "BLOQUEADA" | "MILESTONE"; }
 interface TeamMember { id: string; name: string; role: string; }
@@ -95,6 +96,8 @@ export default function ProductDetail() {
   // Logo state
   const logoInputRef = useRef<HTMLInputElement>(null);
   const [logoPreview, setLogoPreview] = useState<string | null>(null);
+  const [logoUploading, setLogoUploading] = useState(false);
+  const [logoProgress, setLogoProgress] = useState(0);
 
   const toggleSection = (id: string) =>
     setOpenSections(prev => prev.includes(id) ? prev.filter(s => s !== id) : [...prev, id]);
@@ -196,20 +199,34 @@ export default function ProductDetail() {
     await updateDoc(doc(db, "users", uid, "products", productId), { colors });
   };
 
-  // Logo upload
-  const handleLogoChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  // Logo upload (Firebase Storage)
+  const handleLogoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = async (ev) => {
-      const url = ev.target?.result as string;
-      setLogoPreview(url);
-      if (uid && productId) {
+    if (!file || !uid || !productId) return;
+    setLogoUploading(true);
+    setLogoProgress(0);
+    const sanitized = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
+    const storageRef = ref(storage, `logos/${uid}/${productId}/${Date.now()}_${sanitized}`);
+    const task = uploadBytesResumable(storageRef, file, { contentType: file.type });
+    task.on(
+      "state_changed",
+      snap => setLogoProgress(Math.round((snap.bytesTransferred / snap.totalBytes) * 100)),
+      () => setLogoUploading(false),
+      async () => {
+        const url = await getDownloadURL(task.snapshot.ref);
+        setLogoPreview(url);
+        setLogoUploading(false);
         await updateDoc(doc(db, "users", uid, "products", productId), { logoUrl: url });
         await logActivity("Logo atualizada");
       }
-    };
-    reader.readAsDataURL(file);
+    );
+  };
+
+  const handleLogoDelete = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setLogoPreview(null);
+    if (!uid || !productId) return;
+    await updateDoc(doc(db, "users", uid, "products", productId), { logoUrl: "" });
   };
 
   const activeTasks = tasks.filter(t => t.status === "ATIVA").length;
@@ -363,11 +380,16 @@ export default function ProductDetail() {
                   }
                 }}
               >
-                {logoPreview ? (
+                {logoUploading ? (
+                  <div className="py-2">
+                    <div className="w-8 h-8 border-2 border-primary/40 border-t-primary rounded-full animate-spin mx-auto mb-2" />
+                    <p className="text-xs text-muted-foreground">{logoProgress}%</p>
+                  </div>
+                ) : logoPreview ? (
                   <div className="relative inline-block">
                     <img src={logoPreview} alt="Logo" className="w-20 h-20 mx-auto object-contain rounded-xl mb-2" />
                     <button
-                      onClick={e => { e.stopPropagation(); setLogoPreview(null); if (uid && productId) updateDoc(doc(db, "users", uid, "products", productId), { logoUrl: "" }); }}
+                      onClick={handleLogoDelete}
                       className="absolute -top-2 -right-2 w-5 h-5 rounded-full bg-red-500/80 text-white flex items-center justify-center hover:bg-red-500"
                     >
                       <X className="w-3 h-3" />
