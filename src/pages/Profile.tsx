@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { ArrowLeft, User, Mail, Phone, Save, LogOut, Bell, Moon, Globe, Lock, ChevronRight, Shield, Camera } from "lucide-react";
+import { ArrowLeft, User, Mail, Phone, Save, LogOut, Bell, Moon, Globe, Lock, ChevronRight, Shield, Camera, Package, ArchiveRestore, Trash2, ChevronDown } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -7,7 +7,7 @@ import { Progress } from "@/components/ui/progress";
 import { useNavigate } from "react-router-dom";
 import { auth, db, storage } from "@/integrations/firebase/client";
 import { signOut, updateProfile } from "firebase/auth";
-import { doc, getDoc, updateDoc } from "firebase/firestore";
+import { doc, getDoc, updateDoc, deleteDoc, collection, query, where, onSnapshot, orderBy } from "firebase/firestore";
 import { ref, uploadBytesResumable, getDownloadURL } from "firebase/storage";
 import { useToast } from "@/hooks/use-toast";
 
@@ -40,6 +40,36 @@ export default function Profile() {
     darkMode: true,
     twoFactor: false,
   });
+
+  // Archived products
+  interface ArchivedProduct { id: string; name: string; type: string; status: string; }
+  const [archivedProducts, setArchivedProducts] = useState<ArchivedProduct[]>([]);
+  const [showArchived, setShowArchived] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!uid) return;
+    const q = query(
+      collection(db, "users", uid, "products"),
+      where("archived", "==", true),
+      orderBy("createdAt", "desc"),
+    );
+    const unsub = onSnapshot(q, snap => {
+      setArchivedProducts(snap.docs.map(d => ({ id: d.id, ...d.data() } as ArchivedProduct)));
+    });
+    return unsub;
+  }, [uid]);
+
+  const handleUnarchive = async (productId: string) => {
+    await updateDoc(doc(db, "users", uid, "products", productId), { archived: false });
+    toast({ title: "Produto desarquivado!", description: "Agora visível na lista de produtos." });
+  };
+
+  const handleDeleteArchivedProduct = async (productId: string) => {
+    setDeletingId(productId);
+    await deleteDoc(doc(db, "users", uid, "products", productId));
+    setDeletingId(null);
+  };
 
   useEffect(() => {
     if (!uid) return;
@@ -248,6 +278,61 @@ export default function Profile() {
             </div>
           </div>
         ))}
+
+        {/* Archived Products */}
+        <div className="bg-surface-low rounded-3xl border border-surface-mid mb-4 overflow-hidden">
+          <button
+            onClick={() => setShowArchived(v => !v)}
+            className="w-full flex items-center justify-between px-5 py-4 hover:bg-surface-mid transition-colors"
+          >
+            <div className="flex items-center gap-3">
+              <div className="w-8 h-8 rounded-xl bg-surface-mid flex items-center justify-center">
+                <Package className="w-4 h-4 text-muted-foreground" />
+              </div>
+              <div className="text-left">
+                <p className="text-sm font-medium text-foreground">Produtos Arquivados</p>
+                <p className="text-xs text-muted-foreground">{archivedProducts.length} produto{archivedProducts.length !== 1 ? "s" : ""}</p>
+              </div>
+            </div>
+            <ChevronDown className={"w-4 h-4 text-muted-foreground transition-transform " + (showArchived ? "rotate-180" : "")} />
+          </button>
+          {showArchived && (
+            <div className="border-t border-surface-mid">
+              {archivedProducts.length === 0 ? (
+                <p className="text-xs text-muted-foreground text-center py-6">Nenhum produto arquivado.</p>
+              ) : (
+                archivedProducts.map((p, idx) => (
+                  <div
+                    key={p.id}
+                    className={"flex items-center gap-3 px-5 py-3.5 " + (idx < archivedProducts.length - 1 ? "border-b border-surface-mid" : "")}
+                  >
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium text-foreground truncate">{p.name}</p>
+                      <p className="text-xs text-muted-foreground">{p.type} · {p.status}</p>
+                    </div>
+                    <div className="flex items-center gap-1.5 flex-shrink-0">
+                      <button
+                        onClick={() => handleUnarchive(p.id)}
+                        title="Desarquivar"
+                        className="w-8 h-8 rounded-xl bg-surface-mid hover:bg-primary/20 flex items-center justify-center transition-colors"
+                      >
+                        <ArchiveRestore className="w-3.5 h-3.5 text-primary" />
+                      </button>
+                      <button
+                        onClick={() => handleDeleteArchivedProduct(p.id)}
+                        title="Apagar permanentemente"
+                        disabled={deletingId === p.id}
+                        className="w-8 h-8 rounded-xl bg-surface-mid hover:bg-red-500/20 flex items-center justify-center transition-colors disabled:opacity-50"
+                      >
+                        <Trash2 className="w-3.5 h-3.5 text-red-400" />
+                      </button>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          )}
+        </div>
 
         <button
           onClick={handleLogout}

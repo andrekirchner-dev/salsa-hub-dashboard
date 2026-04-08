@@ -58,6 +58,7 @@ export default function Products() {
   }, [uid]);
 
   const filtered = products.filter(p => {
+    if ((p as any).archived) return false;
     const matchSearch = p.name.toLowerCase().includes(search.toLowerCase());
     const matchType = typeFilter === "Todos" || p.type === typeFilter;
     const matchStatus = statusFilter === "Todos" || p.status === statusFilter;

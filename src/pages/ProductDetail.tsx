@@ -180,6 +180,22 @@ export default function ProductDetail() {
     await logActivity("Descrição atualizada");
   };
 
+  // Archive / Delete product
+  const [confirmDelete, setConfirmDelete] = useState(false);
+
+  const handleArchive = async () => {
+    if (!uid || !productId) return;
+    await updateDoc(doc(db, "users", uid, "products", productId), { archived: true });
+    await logActivity("Projeto arquivado");
+    navigate(-1);
+  };
+
+  const handleDeleteProduct = async () => {
+    if (!uid || !productId) return;
+    await deleteDoc(doc(db, "users", uid, "products", productId));
+    navigate("/products", { replace: true });
+  };
+
   // Clear all activity
   const handleClearActivity = async () => {
     if (!uid || !productId || activity.length === 0) return;
@@ -535,7 +551,41 @@ export default function ProductDetail() {
             <p className="text-xs font-semibold text-red-400 flex items-center gap-1.5">
               <AlertTriangle className="w-3.5 h-3.5" />Zona de Perigo
             </p>
-            <Button variant="outline" className="w-full rounded-xl text-red-400 border-red-500/30 text-sm">Arquivar Projeto</Button>
+            <Button
+              variant="outline"
+              onClick={handleArchive}
+              className="w-full rounded-xl text-amber-400 border-amber-500/30 hover:bg-amber-500/10 text-sm"
+            >
+              Arquivar Projeto
+            </Button>
+            {!confirmDelete ? (
+              <Button
+                variant="outline"
+                onClick={() => setConfirmDelete(true)}
+                className="w-full rounded-xl text-red-400 border-red-500/30 hover:bg-red-500/10 text-sm"
+              >
+                Apagar Projeto
+              </Button>
+            ) : (
+              <div className="space-y-2">
+                <p className="text-xs text-red-400 text-center font-medium">Tem certeza? Esta ação é irreversível.</p>
+                <div className="flex gap-2">
+                  <Button
+                    variant="outline"
+                    onClick={() => setConfirmDelete(false)}
+                    className="flex-1 rounded-xl text-muted-foreground border-surface-high text-sm"
+                  >
+                    Cancelar
+                  </Button>
+                  <Button
+                    onClick={handleDeleteProduct}
+                    className="flex-1 rounded-xl bg-red-500 hover:bg-red-600 text-white text-sm"
+                  >
+                    Sim, apagar
+                  </Button>
+                </div>
+              </div>
+            )}
           </div>
         </DrawerSection>
       </div>
