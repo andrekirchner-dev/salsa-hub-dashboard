@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import {
   ArrowLeft, Plus, Search, Send, Paperclip, MessageCircle,
-  FileText, Loader2, Download,
+  FileText, Loader2, Download, Trash2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -9,7 +9,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { auth, db, storage } from "@/integrations/firebase/client";
 import {
   collection, onSnapshot, addDoc, serverTimestamp, query,
-  orderBy, doc, setDoc, getDocs, where,
+  orderBy, doc, setDoc, getDocs, where, deleteDoc,
 } from "firebase/firestore";
 import { ref, uploadBytesResumable, getDownloadURL } from "firebase/storage";
 
@@ -99,6 +99,9 @@ export default function Chat() {
   const [uploadProgress, setUploadProgress] = useState<number | null>(null);
   const [uploadFileName, setUploadFileName] = useState("");
 
+  // Delete confirmation
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+
   // Nova Conversa modal
   const [newConvOpen, setNewConvOpen] = useState(false);
   const [userSearch, setUserSearch] = useState("");
@@ -107,12 +110,23 @@ export default function Chat() {
   const [creatingConv, setCreatingConv] = useState(false);
 
   // Load conversations
+  // Uses where() so the query satisfies the Firestore rule
+  // (uid in participantUids) — without it the entire query is denied.
+  // Client-side sort avoids needing a composite index.
   useEffect(() => {
-    const q = query(collection(db, "conversations"), orderBy("updatedAt", "desc"));
+    if (!uid) return;
+    const q = query(
+      collection(db, "conversations"),
+      where("participantUids", "array-contains", uid),
+    );
     const unsub = onSnapshot(q, (snap) => {
       const all = snap.docs
         .map(d => ({ id: d.id, ...d.data() } as Conversation))
-        .filter(c => c.participantUids?.includes(uid));
+        .sort((a, b) => {
+          const ta = a.updatedAt?.toDate?.()?.getTime() ?? 0;
+          const tb = b.updatedAt?.toDate?.()?.getTime() ?? 0;
+          return tb - ta;
+        });
       setConversations(all);
     });
     return unsub;
@@ -158,6 +172,7 @@ export default function Chat() {
     await setDoc(doc(db, "conversations", activeConv.id), {
       lastMessage: text, updatedAt: serverTimestamp(),
     }, { merge: true });
+    notifyParticipants(activeConv, text);
   };
 
   // Upload file to Firebase Storage
@@ -183,15 +198,40 @@ export default function Chat() {
           fileUrl, fileName: file.name, fileSize: file.size,
           fileType: fileIsImage ? "image" : "file",
         });
+        const lastMsg = fileIsImage ? "📷 Imagem" : `📎 ${file.name}`;
         await setDoc(doc(db, "conversations", activeConv.id), {
-          lastMessage: fileIsImage ? "📷 Imagem" : `📎 ${file.name}`,
-          updatedAt: serverTimestamp(),
+          lastMessage: lastMsg, updatedAt: serverTimestamp(),
         }, { merge: true });
+        notifyParticipants(activeConv, lastMsg);
         setUploadProgress(null);
         setUploadFileName("");
         if (fileInputRef.current) fileInputRef.current.value = "";
       },
     );
+  };
+
+  // Notify all other participants of a new message
+  const notifyParticipants = (conv: Conversation, preview: string) => {
+    const displayName = getConvDisplayName(conv, uid);
+    conv.participantUids
+      .filter(u => u !== uid)
+      .forEach(targetUid => {
+        addDoc(collection(db, "users", targetUid, "notifications"), {
+          type: "chat",
+          title: userName,
+          description: `${displayName}: ${preview.slice(0, 80)}`,
+          createdAt: serverTimestamp(),
+          read: false,
+          conversationId: conv.id,
+        }).catch(() => {});
+      });
+  };
+
+  // Delete a conversation
+  const handleDeleteConversation = async (convId: string) => {
+    setConfirmDeleteId(null);
+    await deleteDoc(doc(db, "conversations", convId));
+    if (activeConv?.id === convId) setActiveConv(null);
   };
 
   // Start or open 1:1 conversation
@@ -236,11 +276,11 @@ export default function Chat() {
   };
 
   const filteredConvs = conversations.filter(c => {
-    const name = getConvDisplayName(c, uid);
-    const matchSearch = name.toLowerCase().includes(search.toLowerCase());
-    const matchFilter =
-      filter === "todos" || c.type === filter ||
-      (filter === "direto" && c.type === "direto");
+    const name = getConvDisplayName(c, uid).toLowerCase();
+    const participantStr = Object.values(c.participantNames ?? {}).join(" ").toLowerCase();
+    const s = search.toLowerCase();
+    const matchSearch = !s || name.includes(s) || participantStr.includes(s);
+    const matchFilter = filter === "todos" || c.type === filter;
     return matchSearch && matchFilter;
   });
 
@@ -404,8 +444,10 @@ export default function Chat() {
             {filteredConvs.map(conv => {
               const displayName = getConvDisplayName(conv, uid);
               return (
-                <button key={conv.id} onClick={() => setActiveConv(conv)}
-                  className="w-full flex items-center gap-3 p-3 rounded-2xl hover:bg-surface-mid active:scale-[0.98] transition-all text-left">
+                <div key={conv.id}
+                  className="w-full flex items-center gap-3 p-3 rounded-2xl hover:bg-surface-mid active:scale-[0.98] transition-all group cursor-pointer"
+                  onClick={() => setActiveConv(conv)}
+                >
                   <div className="relative flex-shrink-0">
                     <div className="w-11 h-11 rounded-full bg-primary/20 text-primary flex items-center justify-center font-bold text-sm">
                       {displayName.charAt(0).toUpperCase()}
@@ -426,12 +468,34 @@ export default function Chat() {
                       {conv.unread}
                     </span>
                   )}
-                </button>
+                  <button
+                    onClick={e => { e.stopPropagation(); setConfirmDeleteId(conv.id); }}
+                    title="Apagar conversa"
+                    className="flex-shrink-0 w-7 h-7 rounded-xl opacity-0 group-hover:opacity-100 bg-surface-high hover:bg-red-500/20 flex items-center justify-center transition-all"
+                  >
+                    <Trash2 className="w-3.5 h-3.5 text-red-400" />
+                  </button>
+                </div>
               );
             })}
           </div>
         )}
       </div>
+
+      {/* Delete Confirmation Dialog */}
+      <Dialog open={!!confirmDeleteId} onOpenChange={(v) => { if (!v) setConfirmDeleteId(null); }}>
+        <DialogContent className="bg-surface-low border-surface-mid max-w-xs">
+          <DialogHeader>
+            <DialogTitle>Apagar conversa?</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground mb-4">Esta ação não pode ser desfeita. A conversa será removida para todos os participantes.</p>
+          <div className="flex gap-2">
+            <Button variant="outline" onClick={() => setConfirmDeleteId(null)} className="flex-1 rounded-xl">Cancelar</Button>
+            <Button onClick={() => confirmDeleteId && handleDeleteConversation(confirmDeleteId)}
+              className="flex-1 rounded-xl bg-red-500 hover:bg-red-600 text-white">Apagar</Button>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* Nova Conversa Modal */}
       <Dialog open={newConvOpen} onOpenChange={(v) => { setNewConvOpen(v); if (!v) setUserSearch(""); }}>

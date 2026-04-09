@@ -97,6 +97,9 @@ service cloud.firestore {
       allow update: if isAuthenticated()
         && request.auth.uid in resource.data.participantUids;
 
+      allow delete: if isAuthenticated()
+        && request.auth.uid in resource.data.participantUids;
+
       // Mensagens dentro da conversa
       match /messages/{msgId} {
         allow read: if isAuthenticated()
