@@ -2,14 +2,14 @@ import { MessageCircle, Package, User, ListTodo, Shield } from "lucide-react";
 import { Link, useLocation } from "react-router-dom";
 import { auth } from "@/integrations/firebase/client";
 
-const OWNER_EMAIL = "kirchner.andre@gmail.com";
+const ADMIN_EMAILS = ["kirchner.andre@gmail.com", "lucas.xaviercr97@gmail.com"];
 
 export function MobileNav() {
   const location = useLocation();
   const isActive = (url: string) =>
     url === "/" ? location.pathname === "/" : location.pathname.startsWith(url);
 
-  const isOwner = auth.currentUser?.email === OWNER_EMAIL;
+  const isOwner = ADMIN_EMAILS.includes(auth.currentUser?.email ?? "");
 
   return (
     <nav

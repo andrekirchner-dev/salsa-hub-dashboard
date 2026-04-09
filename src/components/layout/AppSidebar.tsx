@@ -9,7 +9,7 @@ import {
 import { Link } from "react-router-dom";
 import { auth } from "@/integrations/firebase/client";
 
-const OWNER_EMAIL = "kirchner.andre@gmail.com";
+const ADMIN_EMAILS = ["kirchner.andre@gmail.com", "lucas.xaviercr97@gmail.com"];
 
 const navItems = [
   { title: "Dashboard",  url: "/",          icon: LayoutDashboard },
@@ -23,7 +23,7 @@ const navItems = [
 
 export function AppSidebar() {
   const { state, toggleSidebar } = useSidebar();
-  const isOwner = auth.currentUser?.email === OWNER_EMAIL;
+  const isOwner = ADMIN_EMAILS.includes(auth.currentUser?.email ?? "");
 
   return (
     <Sidebar className="bg-surface-low border-r border-surface-mid">

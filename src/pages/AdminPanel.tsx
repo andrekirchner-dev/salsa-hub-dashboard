@@ -17,9 +17,8 @@ import {
 import { useNavigate } from "react-router-dom";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
-const OWNER_EMAIL = "kirchner.andre@gmail.com";
-// PIN = email username (before the @)
-const ADMIN_PIN = OWNER_EMAIL.split("@")[0]; // "lucas.xaviercr97"
+const ADMIN_EMAILS = ["kirchner.andre@gmail.com", "lucas.xaviercr97@gmail.com"];
+const ADMIN_PIN = "kirchner";
 
 // ── Interfaces ────────────────────────────────────────────────────────────────
 interface Company { id: string; name: string; plan: string; members: number; createdAt: any; status: "Ativa" | "Inativa"; }
@@ -233,7 +232,7 @@ export default function AdminPanel() {
 
   // If user is not the owner, redirect
   useEffect(() => {
-    if (userEmail && userEmail !== OWNER_EMAIL) {
+    if (userEmail && !ADMIN_EMAILS.includes(userEmail)) {
       navigate("/", { replace: true });
     }
   }, [userEmail, navigate]);
@@ -267,7 +266,7 @@ export default function AdminPanel() {
     return () => { unsubCompanies(); unsubRequests(); unsubUsers(); unsubCodes(); };
   }, [uid, unlocked]);
 
-  if (!userEmail || userEmail !== OWNER_EMAIL) return null;
+  if (!userEmail || !ADMIN_EMAILS.includes(userEmail)) return null;
   if (!unlocked) return <PinLockScreen onUnlock={() => setUnlocked(true)} />;
 
   const pendingCount = requests.filter(r => r.status === "Pendente").length;

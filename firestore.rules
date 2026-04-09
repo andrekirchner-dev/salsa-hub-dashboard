@@ -21,7 +21,10 @@ service cloud.firestore {
     // Qualquer autenticado pode LER para validar no SetupProfile.
     // Apenas o owner (kirchner.andre@gmail.com) pode escrever.
     function isAppOwner() {
-      return isAuthenticated() && request.auth.token.email == "kirchner.andre@gmail.com";
+      return isAuthenticated() && (
+        request.auth.token.email == "kirchner.andre@gmail.com" ||
+        request.auth.token.email == "lucas.xaviercr97@gmail.com"
+      );
     }
 
     match /roleCodes/{codeId} {
