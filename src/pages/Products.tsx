@@ -14,7 +14,14 @@ import {
   collection, onSnapshot, addDoc, serverTimestamp, query, orderBy,
 } from "firebase/firestore";
 
-const productTypes = ["Todos", "App / SaaS", "Infoproduto", "E-commerce", "Landing Page"];
+// shared product reference stored when another user adds you to their product
+interface SharedProduct extends Product { ownerUid: string; isShared: true; }
+
+const productTypes = [
+  "Todos", "App", "SaaS", "Infoproduto", "E-commerce", "Landing Page",
+  "Rede Social", "IA-Book", "E-Book", "Revista Digital", "Dashboard",
+  "Comunidade", "Curso",
+];
 const statusTypes = ["Todos", "Em desenvolvimento", "Lançado", "Pausado"];
 
 interface Product {
@@ -36,6 +43,7 @@ export default function Products() {
   const uid = auth.currentUser?.uid ?? "";
 
   const [products, setProducts] = useState<Product[]>([]);
+  const [sharedProducts, setSharedProducts] = useState<SharedProduct[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [typeFilter, setTypeFilter] = useState("Todos");
@@ -57,13 +65,24 @@ export default function Products() {
     return unsub;
   }, [uid]);
 
-  const filtered = products.filter(p => {
+  // Load products shared with this user by others
+  useEffect(() => {
+    if (!uid) return;
+    const q = query(collection(db, "users", uid, "sharedProducts"), orderBy("addedAt", "desc"));
+    return onSnapshot(q, snap => {
+      setSharedProducts(snap.docs.map(d => ({ id: d.id, ...d.data() } as SharedProduct)));
+    });
+  }, [uid]);
+
+  const filterFn = (p: Product) => {
     if ((p as any).archived) return false;
     const matchSearch = p.name.toLowerCase().includes(search.toLowerCase());
     const matchType = typeFilter === "Todos" || p.type === typeFilter;
     const matchStatus = statusFilter === "Todos" || p.status === statusFilter;
     return matchSearch && matchType && matchStatus;
-  });
+  };
+  const filtered = products.filter(filterFn);
+  const filteredShared = sharedProducts.filter(filterFn);
 
   const handleAdd = async () => {
     if (!newName.trim() || !newType || !newStatus) return;
@@ -193,7 +212,7 @@ export default function Products() {
               </div>
             ))}
           </div>
-        ) : filtered.length === 0 && products.length === 0 ? (
+        ) : filtered.length === 0 && filteredShared.length === 0 && products.length === 0 ? (
           <div className="text-center py-16 text-muted-foreground">
             <Package className="w-12 h-12 mx-auto mb-3 opacity-30" />
             <p className="text-sm font-medium text-foreground mb-1">Nenhum produto ainda</p>
@@ -206,36 +225,40 @@ export default function Products() {
         ) : (
           <>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              {filtered.map(product => (
-                <button
-                  key={product.id}
-                  onClick={() => navigate(`/products/${product.id}`)}
-                  className="bg-surface-low rounded-3xl p-5 border border-surface-mid hover:bg-surface-mid active:scale-[0.98] transition-all text-left"
-                >
-                  <div className="flex items-start justify-between mb-4">
-                    <div className="w-10 h-10 rounded-2xl bg-primary/15 flex items-center justify-center">
-                      <Package className="w-5 h-5 text-primary" />
+              {[...filtered, ...filteredShared].map(product => {
+                const isShared = !!(product as SharedProduct).isShared;
+                return (
+                  <button
+                    key={product.id}
+                    onClick={() => navigate(`/products/${product.id}`, isShared ? { state: { ownerUid: (product as SharedProduct).ownerUid } } : undefined)}
+                    className="bg-surface-low rounded-3xl p-5 border border-surface-mid hover:bg-surface-mid active:scale-[0.98] transition-all text-left"
+                  >
+                    <div className="flex items-start justify-between mb-4">
+                      <div className="w-10 h-10 rounded-2xl bg-primary/15 flex items-center justify-center">
+                        <Package className="w-5 h-5 text-primary" />
+                      </div>
+                      <div className="flex gap-1.5 flex-wrap justify-end">
+                        {isShared && <Badge className="text-xs bg-blue-500/20 text-blue-400">Parceiro</Badge>}
+                        <Badge className={`text-xs ${getStatusColor(product.status)}`}>{product.status}</Badge>
+                      </div>
                     </div>
-                    <Badge className={`text-xs ${getStatusColor(product.status)}`}>
-                      {product.status}
-                    </Badge>
-                  </div>
 
-                  <h3 className="font-semibold text-foreground mb-1">{product.name}</h3>
-                  <p className="text-xs text-muted-foreground mb-3">{product.type}</p>
+                    <h3 className="font-semibold text-foreground mb-1">{product.name}</h3>
+                    <p className="text-xs text-muted-foreground mb-3">{product.type}</p>
 
-                  <div className="mb-3">
-                    <div className="flex justify-between items-center mb-1">
-                      <span className="text-xs text-muted-foreground">Progresso</span>
-                      <span className="text-xs font-medium text-primary">{product.progress ?? 0}%</span>
+                    <div className="mb-3">
+                      <div className="flex justify-between items-center mb-1">
+                        <span className="text-xs text-muted-foreground">Progresso</span>
+                        <span className="text-xs font-medium text-primary">{product.progress ?? 0}%</span>
+                      </div>
+                      <Progress value={product.progress ?? 0} className="h-1.5 bg-surface-mid" />
                     </div>
-                    <Progress value={product.progress ?? 0} className="h-1.5 bg-surface-mid" />
-                  </div>
-                </button>
-              ))}
+                  </button>
+                );
+              })}
             </div>
 
-            {filtered.length === 0 && (
+            {filtered.length === 0 && filteredShared.length === 0 && (
               <div className="text-center py-16 text-muted-foreground">
                 <Package className="w-12 h-12 mx-auto mb-3 opacity-30" />
                 <p className="text-sm">Nenhum produto encontrado</p>

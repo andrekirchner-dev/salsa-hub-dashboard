@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams, useLocation } from "react-router-dom";
 import {
   ArrowLeft, ChevronDown, ChevronUp, Upload, Plus, Trash2, Download,
   FileText, Image, File, CheckSquare, FolderOpen, BookOpen,
@@ -14,8 +14,8 @@ import { Progress } from "@/components/ui/progress";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { auth, db, storage } from "@/integrations/firebase/client";
 import {
-  doc, getDoc, collection, onSnapshot, addDoc, deleteDoc,
-  updateDoc, query, orderBy, serverTimestamp, writeBatch,
+  doc, getDoc, getDocs, collection, onSnapshot, addDoc, deleteDoc,
+  updateDoc, query, orderBy, serverTimestamp, writeBatch, setDoc,
 } from "firebase/firestore";
 import { ref, uploadBytesResumable, getDownloadURL } from "firebase/storage";
 
@@ -75,11 +75,16 @@ function DrawerSection({ id, icon: Icon, title, badge, open, onToggle, children 
   );
 }
 
+interface RegisteredUser { uid: string; name: string; email: string; role: string; }
+
 export default function ProductDetail() {
   const navigate = useNavigate();
+  const location = useLocation();
   const { id: productId } = useParams<{ id: string }>();
   const uid = auth.currentUser?.uid ?? "";
   const userName = auth.currentUser?.displayName ?? "Usuário";
+  // ownerUid: own product vs product shared by partner
+  const ownerUid: string = (location.state as any)?.ownerUid ?? uid;
 
   const [product, setProduct] = useState<Product | null>(null);
   const [description, setDescription] = useState("");
@@ -92,6 +97,10 @@ export default function ProductDetail() {
   const [newTaskStatus, setNewTaskStatus] = useState<TaskCard["status"]>("ATIVA");
   const [newMemberName, setNewMemberName] = useState("");
   const [newMemberRole, setNewMemberRole] = useState("");
+  const [memberSearch, setMemberSearch] = useState("");
+  const [allUsers, setAllUsers] = useState<RegisteredUser[]>([]);
+  const [loadingUsers, setLoadingUsers] = useState(false);
+  const [memberDialogOpen, setMemberDialogOpen] = useState(false);
 
   // Color palette state
   const [colorPalette, setColorPalette] = useState([
@@ -118,10 +127,10 @@ export default function ProductDetail() {
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const saveField = (field: string, value: string | number) => {
-    if (!uid || !productId) return;
+    if (!ownerUid || !productId) return;
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => {
-      updateDoc(doc(db, "users", uid, "products", productId), { [field]: value });
+      updateDoc(doc(db, "users", ownerUid, "products", productId), { [field]: value });
     }, 800);
   };
 
@@ -129,10 +138,21 @@ export default function ProductDetail() {
     setOpenSections(prev => prev.includes(id) ? prev.filter(s => s !== id) : [...prev, id]);
   const isOpen = (id: string) => openSections.includes(id);
 
+  // Load registered users when member dialog opens
+  useEffect(() => {
+    if (!memberDialogOpen) return;
+    setLoadingUsers(true);
+    getDocs(collection(db, "profiles")).then(snap => {
+      const existing = new Set(teamMembers.map(m => m.id));
+      setAllUsers(snap.docs.filter(d => d.id !== uid && !existing.has(d.id)).map(d => ({ uid: d.id, ...d.data() } as RegisteredUser)));
+      setLoadingUsers(false);
+    }).catch(() => setLoadingUsers(false));
+  }, [memberDialogOpen, uid, teamMembers]);
+
   // Load product
   useEffect(() => {
-    if (!uid || !productId) return;
-    getDoc(doc(db, "users", uid, "products", productId)).then(snap => {
+    if (!ownerUid || !productId) return;
+    getDoc(doc(db, "users", ownerUid, "products", productId)).then(snap => {
       if (snap.exists()) {
         const d = snap.data() as Product;
         setProduct(d);
@@ -157,35 +177,35 @@ export default function ProductDetail() {
 
   // Load tasks
   useEffect(() => {
-    if (!uid || !productId) return;
-    const q = query(collection(db, "users", uid, "products", productId, "tasks"), orderBy("createdAt", "asc"));
+    if (!ownerUid || !productId) return;
+    const q = query(collection(db, "users", ownerUid, "products", productId, "tasks"), orderBy("createdAt", "asc"));
     return onSnapshot(q, snap => setTasks(snap.docs.map(d => ({ id: d.id, ...d.data() } as TaskCard))));
-  }, [uid, productId]);
+  }, [ownerUid, productId]);
 
   // Load team
   useEffect(() => {
-    if (!uid || !productId) return;
-    const q = query(collection(db, "users", uid, "products", productId, "team"), orderBy("name", "asc"));
+    if (!ownerUid || !productId) return;
+    const q = query(collection(db, "users", ownerUid, "products", productId, "team"), orderBy("name", "asc"));
     return onSnapshot(q, snap => setTeamMembers(snap.docs.map(d => ({ id: d.id, ...d.data() } as TeamMember))));
-  }, [uid, productId]);
+  }, [ownerUid, productId]);
 
   // Load activity
   useEffect(() => {
-    if (!uid || !productId) return;
-    const q = query(collection(db, "users", uid, "products", productId, "activity"), orderBy("createdAt", "desc"));
+    if (!ownerUid || !productId) return;
+    const q = query(collection(db, "users", ownerUid, "products", productId, "activity"), orderBy("createdAt", "desc"));
     return onSnapshot(q, snap => setActivity(snap.docs.map(d => ({ id: d.id, ...d.data() } as ActivityItem))));
-  }, [uid, productId]);
+  }, [ownerUid, productId]);
 
   const logActivity = async (action: string) => {
-    if (!uid || !productId) return;
-    await addDoc(collection(db, "users", uid, "products", productId, "activity"), {
+    if (!ownerUid || !productId) return;
+    await addDoc(collection(db, "users", ownerUid, "products", productId, "activity"), {
       action, user: userName, createdAt: serverTimestamp(),
     });
   };
 
   const handleAddTask = async () => {
-    if (!newTaskTitle.trim() || !uid || !productId) return;
-    await addDoc(collection(db, "users", uid, "products", productId, "tasks"), {
+    if (!newTaskTitle.trim() || !ownerUid || !productId) return;
+    await addDoc(collection(db, "users", ownerUid, "products", productId, "tasks"), {
       title: newTaskTitle.trim(), status: newTaskStatus, createdAt: serverTimestamp(),
     });
     await logActivity(`Tarefa adicionada: ${newTaskTitle.trim()}`);
@@ -193,23 +213,44 @@ export default function ProductDetail() {
   };
 
   const handleDeleteTask = async (taskId: string, title: string) => {
-    if (!uid || !productId) return;
-    await deleteDoc(doc(db, "users", uid, "products", productId, "tasks", taskId));
+    if (!ownerUid || !productId) return;
+    await deleteDoc(doc(db, "users", ownerUid, "products", productId, "tasks", taskId));
     await logActivity(`Tarefa removida: ${title}`);
   };
 
-  const handleAddMember = async () => {
-    if (!newMemberName.trim() || !uid || !productId) return;
-    await addDoc(collection(db, "users", uid, "products", productId, "team"), {
-      name: newMemberName.trim(), role: newMemberRole.trim(), createdAt: serverTimestamp(),
+  const handleAddMember = async (user: RegisteredUser) => {
+    if (!ownerUid || !productId || !product) return;
+    // Add to product team subcollection (keyed by uid for dedup)
+    await setDoc(doc(db, "users", ownerUid, "products", productId, "team", user.uid), {
+      name: user.name, role: user.role, createdAt: serverTimestamp(),
     });
-    await logActivity(`Membro adicionado: ${newMemberName.trim()}`);
-    setNewMemberName(""); setNewMemberRole("");
+    // Write a sharedProducts entry so product appears in member's Products list
+    await setDoc(doc(db, "users", user.uid, "sharedProducts", productId), {
+      id: productId,
+      name: product.name,
+      type: product.type,
+      status: product.status,
+      progress: product.progress ?? 0,
+      ownerUid,
+      isShared: true,
+      addedAt: serverTimestamp(),
+    });
+    // Notify the added member
+    await addDoc(collection(db, "users", user.uid, "notifications"), {
+      type: "product",
+      title: "Acesso ao produto",
+      description: `Você foi adicionado ao produto "${product.name}".`,
+      read: false,
+      createdAt: serverTimestamp(),
+    });
+    await logActivity(`Membro adicionado: ${user.name}`);
+    setMemberSearch("");
+    setMemberDialogOpen(false);
   };
 
   const handleSaveDescription = async () => {
-    if (!uid || !productId) return;
-    await updateDoc(doc(db, "users", uid, "products", productId), { description });
+    if (!ownerUid || !productId) return;
+    await updateDoc(doc(db, "users", ownerUid, "products", productId), { description });
     await logActivity("Descrição atualizada");
   };
 
@@ -217,24 +258,24 @@ export default function ProductDetail() {
   const [confirmDelete, setConfirmDelete] = useState(false);
 
   const handleArchive = async () => {
-    if (!uid || !productId) return;
-    await updateDoc(doc(db, "users", uid, "products", productId), { archived: true });
+    if (!ownerUid || !productId) return;
+    await updateDoc(doc(db, "users", ownerUid, "products", productId), { archived: true });
     await logActivity("Projeto arquivado");
     navigate(-1);
   };
 
   const handleDeleteProduct = async () => {
-    if (!uid || !productId) return;
-    await deleteDoc(doc(db, "users", uid, "products", productId));
+    if (!ownerUid || !productId) return;
+    await deleteDoc(doc(db, "users", ownerUid, "products", productId));
     navigate("/products", { replace: true });
   };
 
   // Clear all activity
   const handleClearActivity = async () => {
-    if (!uid || !productId || activity.length === 0) return;
+    if (!ownerUid || !productId || activity.length === 0) return;
     const batch = writeBatch(db);
     activity.forEach(item => {
-      batch.delete(doc(db, "users", uid, "products", productId, "activity", item.id));
+      batch.delete(doc(db, "users", ownerUid, "products", productId, "activity", item.id));
     });
     await batch.commit();
   };
@@ -243,19 +284,19 @@ export default function ProductDetail() {
   const handleColorChange = async (idx: number, newColor: string) => {
     const updated = colorPalette.map((c, i) => i === idx ? { ...c, color: newColor } : c);
     setColorPalette(updated);
-    if (!uid || !productId) return;
+    if (!ownerUid || !productId) return;
     const colors = Object.fromEntries(updated.map(c => [c.key, c.color]));
-    await updateDoc(doc(db, "users", uid, "products", productId), { colors });
+    await updateDoc(doc(db, "users", ownerUid, "products", productId), { colors });
   };
 
   // Logo upload (Firebase Storage)
   const handleLogoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (!file || !uid || !productId) return;
+    if (!file || !ownerUid || !productId) return;
     setLogoUploading(true);
     setLogoProgress(0);
     const sanitized = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
-    const storageRef = ref(storage, `logos/${uid}/${productId}/${Date.now()}_${sanitized}`);
+    const storageRef = ref(storage, `logos/${ownerUid}/${productId}/${Date.now()}_${sanitized}`);
     const task = uploadBytesResumable(storageRef, file, { contentType: file.type });
     task.on(
       "state_changed",
@@ -265,7 +306,7 @@ export default function ProductDetail() {
         const url = await getDownloadURL(task.snapshot.ref);
         setLogoPreview(url);
         setLogoUploading(false);
-        await updateDoc(doc(db, "users", uid, "products", productId), { logoUrl: url });
+        await updateDoc(doc(db, "users", ownerUid, "products", productId), { logoUrl: url });
         await logActivity("Logo atualizada");
       }
     );
@@ -274,8 +315,8 @@ export default function ProductDetail() {
   const handleLogoDelete = async (e: React.MouseEvent) => {
     e.stopPropagation();
     setLogoPreview(null);
-    if (!uid || !productId) return;
-    await updateDoc(doc(db, "users", uid, "products", productId), { logoUrl: "" });
+    if (!ownerUid || !productId) return;
+    await updateDoc(doc(db, "users", ownerUid, "products", productId), { logoUrl: "" });
   };
 
   const activeTasks = tasks.filter(t => t.status === "ATIVA").length;
@@ -395,6 +436,89 @@ export default function ProductDetail() {
           )}
         </DrawerSection>
 
+        {/* ── Inteligência de Mercado ───────────────────────────────── */}
+        <DrawerSection id="mercado" icon={Globe} title="Definição de Mercado" open={isOpen("mercado")} onToggle={toggleSection}>
+          <textarea
+            value={mercado}
+            onChange={e => { setMercado(e.target.value); saveField("mercado", e.target.value); }}
+            placeholder="Descreva o mercado-alvo, tamanho, oportunidades e posicionamento..."
+            className="w-full h-32 bg-surface-mid rounded-xl p-3 text-sm text-foreground placeholder:text-muted-foreground resize-none border-0 outline-none focus:ring-1 focus:ring-primary/40"
+          />
+        </DrawerSection>
+
+        <DrawerSection id="tendenciaComportamento" icon={TrendingUp} title="Tendências de Comportamento" open={isOpen("tendenciaComportamento")} onToggle={toggleSection}>
+          <textarea
+            value={tendenciaComportamento}
+            onChange={e => { setTendenciaComportamento(e.target.value); saveField("tendenciaComportamento", e.target.value); }}
+            placeholder="Mudanças no comportamento do consumidor, hábitos emergentes..."
+            className="w-full h-32 bg-surface-mid rounded-xl p-3 text-sm text-foreground placeholder:text-muted-foreground resize-none border-0 outline-none focus:ring-1 focus:ring-primary/40"
+          />
+        </DrawerSection>
+
+        <DrawerSection id="tendenciaConteudo" icon={FileText} title="Tendências de Conteúdo" open={isOpen("tendenciaConteudo")} onToggle={toggleSection}>
+          <textarea
+            value={tendenciaConteudo}
+            onChange={e => { setTendenciaConteudo(e.target.value); saveField("tendenciaConteudo", e.target.value); }}
+            placeholder="Formatos em alta, temas relevantes, linguagem do setor..."
+            className="w-full h-32 bg-surface-mid rounded-xl p-3 text-sm text-foreground placeholder:text-muted-foreground resize-none border-0 outline-none focus:ring-1 focus:ring-primary/40"
+          />
+        </DrawerSection>
+
+        <DrawerSection id="concorrentes" icon={BarChart2} title="Análise de Concorrentes" open={isOpen("concorrentes")} onToggle={toggleSection}>
+          <textarea
+            value={concorrentes}
+            onChange={e => { setConcorrentes(e.target.value); saveField("concorrentes", e.target.value); }}
+            placeholder="Principais concorrentes, diferenciais, pontos fracos e fortes..."
+            className="w-full h-32 bg-surface-mid rounded-xl p-3 text-sm text-foreground placeholder:text-muted-foreground resize-none border-0 outline-none focus:ring-1 focus:ring-primary/40"
+          />
+        </DrawerSection>
+
+        <DrawerSection id="tendenciaMarketing" icon={Megaphone} title="Tendências de Marketing" open={isOpen("tendenciaMarketing")} onToggle={toggleSection}>
+          <textarea
+            value={tendenciaMarketing}
+            onChange={e => { setTendenciaMarketing(e.target.value); saveField("tendenciaMarketing", e.target.value); }}
+            placeholder="Canais em crescimento, estratégias eficazes, benchmarks do setor..."
+            className="w-full h-32 bg-surface-mid rounded-xl p-3 text-sm text-foreground placeholder:text-muted-foreground resize-none border-0 outline-none focus:ring-1 focus:ring-primary/40"
+          />
+        </DrawerSection>
+
+        <DrawerSection id="demografico" icon={Target} title="Definição Demográfica" open={isOpen("demografico")} onToggle={toggleSection}>
+          <textarea
+            value={demografico}
+            onChange={e => { setDemografico(e.target.value); saveField("demografico", e.target.value); }}
+            placeholder="Idade, gênero, renda, localização, escolaridade, estilo de vida..."
+            className="w-full h-32 bg-surface-mid rounded-xl p-3 text-sm text-foreground placeholder:text-muted-foreground resize-none border-0 outline-none focus:ring-1 focus:ring-primary/40"
+          />
+        </DrawerSection>
+
+        <DrawerSection id="preco" icon={DollarSign} title="Precificação" open={isOpen("preco")} onToggle={toggleSection}>
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <span className="text-xs text-muted-foreground">R$ 0</span>
+              <span className="text-lg font-bold text-primary">
+                {preco.toLocaleString("pt-BR", { style: "currency", currency: "BRL", minimumFractionDigits: 0 })}
+              </span>
+              <span className="text-xs text-muted-foreground">R$ 20.000</span>
+            </div>
+            <div className="relative px-1">
+              <input
+                type="range" min={0} max={20000} step={50} value={preco}
+                onChange={e => { const v = Number(e.target.value); setPreco(v); saveField("preco", v); }}
+                className="w-full h-2 rounded-full appearance-none cursor-pointer"
+                style={{ background: `linear-gradient(to right, hsl(var(--primary)) 0%, hsl(var(--primary)) ${(preco / 20000) * 100}%, hsl(var(--surface-high)) ${(preco / 20000) * 100}%, hsl(var(--surface-high)) 100%)` }}
+              />
+            </div>
+            <div className="flex gap-2 flex-wrap">
+              {[99, 297, 497, 997, 1997, 4997, 9997].map(v => (
+                <button key={v} onClick={() => { setPreco(v); saveField("preco", v); }}
+                  className={"px-2.5 py-1 rounded-lg text-xs font-medium transition-colors " + (preco === v ? "bg-primary text-background" : "bg-surface-mid text-muted-foreground hover:bg-surface-high")}>
+                  {v.toLocaleString("pt-BR", { style: "currency", currency: "BRL", minimumFractionDigits: 0 })}
+                </button>
+              ))}
+            </div>
+          </div>
+        </DrawerSection>
+
         {/* ARQUIVOS */}
         <DrawerSection id="files" icon={FolderOpen} title="Arquivos" open={isOpen("files")} onToggle={toggleSection}>
           <div className="bg-surface-mid rounded-2xl p-8 border-2 border-dashed border-surface-high text-center hover:border-primary/50 transition-colors cursor-pointer">
@@ -494,7 +618,7 @@ export default function ProductDetail() {
         {/* EQUIPE */}
         <DrawerSection id="team" icon={Users} title="Equipe do Produto" badge={teamMembers.length} open={isOpen("team")} onToggle={toggleSection}>
           <div className="flex justify-end mb-3">
-            <Dialog>
+            <Dialog open={memberDialogOpen} onOpenChange={setMemberDialogOpen}>
               <DialogTrigger asChild>
                 <Button size="sm" className="rounded-2xl bg-primary hover:bg-primary/80 text-sm">
                   <Plus className="w-4 h-4 mr-1" />Adicionar
@@ -502,10 +626,51 @@ export default function ProductDetail() {
               </DialogTrigger>
               <DialogContent className="bg-surface-low border-surface-mid">
                 <DialogHeader><DialogTitle>Adicionar Membro</DialogTitle></DialogHeader>
-                <div className="space-y-4">
-                  <Input placeholder="Nome do membro *" value={newMemberName} onChange={e => setNewMemberName(e.target.value)} className="bg-surface-mid border-0 rounded-xl" />
-                  <Input placeholder="Cargo (ex: Designer)" value={newMemberRole} onChange={e => setNewMemberRole(e.target.value)} className="bg-surface-mid border-0 rounded-xl" />
-                  <Button className="w-full rounded-xl bg-primary hover:bg-primary/80" onClick={handleAddMember} disabled={!newMemberName.trim()}>Adicionar</Button>
+                <div className="space-y-3">
+                  <div className="relative">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                    <Input
+                      placeholder="Buscar por nome ou e-mail..."
+                      value={memberSearch}
+                      onChange={e => setMemberSearch(e.target.value)}
+                      className="pl-9 bg-surface-mid border-0 rounded-xl text-sm"
+                    />
+                  </div>
+                  {loadingUsers ? (
+                    <p className="text-xs text-muted-foreground text-center py-4">Carregando usuários...</p>
+                  ) : (
+                    <div className="max-h-60 overflow-y-auto space-y-1">
+                      {allUsers
+                        .filter(u =>
+                          !memberSearch.trim() ? true :
+                          u.name.toLowerCase().includes(memberSearch.toLowerCase()) ||
+                          u.email.toLowerCase().includes(memberSearch.toLowerCase())
+                        )
+                        .map(u => (
+                          <button
+                            key={u.uid}
+                            onClick={() => handleAddMember(u)}
+                            className="w-full flex items-center gap-3 p-3 rounded-xl hover:bg-surface-mid transition-colors text-left"
+                          >
+                            <div className="w-8 h-8 rounded-full bg-primary/20 text-primary flex items-center justify-center font-semibold text-xs flex-shrink-0">
+                              {u.name.split(" ").map((n: string) => n[0]).join("").slice(0, 2).toUpperCase()}
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <p className="text-sm font-medium text-foreground truncate">{u.name}</p>
+                              <p className="text-xs text-muted-foreground truncate">{u.role || u.email}</p>
+                            </div>
+                          </button>
+                        ))
+                      }
+                      {allUsers.filter(u =>
+                        !memberSearch.trim() ? true :
+                        u.name.toLowerCase().includes(memberSearch.toLowerCase()) ||
+                        u.email.toLowerCase().includes(memberSearch.toLowerCase())
+                      ).length === 0 && (
+                        <p className="text-xs text-muted-foreground text-center py-4">Nenhum usuário encontrado.</p>
+                      )}
+                    </div>
+                  )}
                 </div>
               </DialogContent>
             </Dialog>
@@ -564,21 +729,44 @@ export default function ProductDetail() {
           <div className="space-y-4">
             <div>
               <label className="text-xs text-muted-foreground block mb-1.5">Nome do Projeto</label>
-              <Input defaultValue={product.name} className="bg-surface-mid border-0 rounded-xl text-sm" />
+              <Input defaultValue={product.name} key={product.name} onBlur={async e => {
+                const v = e.target.value.trim();
+                if (v && v !== product.name) {
+                  await updateDoc(doc(db, "users", ownerUid, "products", productId!), { name: v });
+                  setProduct(p => p ? { ...p, name: v } : p);
+                  await logActivity("Nome atualizado");
+                }
+              }} className="bg-surface-mid border-0 rounded-xl text-sm" />
             </div>
             <div>
               <label className="text-xs text-muted-foreground block mb-1.5">Data de Lançamento</label>
-              <Input defaultValue={product.launchDate ?? ""} type="date" className="bg-surface-mid border-0 rounded-xl text-sm" />
+              <Input defaultValue={product.launchDate ?? ""} key={product.launchDate} type="date" onBlur={async e => {
+                const v = e.target.value;
+                await updateDoc(doc(db, "users", ownerUid, "products", productId!), { launchDate: v });
+                setProduct(p => p ? { ...p, launchDate: v } : p);
+              }} className="bg-surface-mid border-0 rounded-xl text-sm" />
+            </div>
+            <div>
+              <label className="text-xs text-muted-foreground block mb-1.5">Progresso (%)</label>
+              <Input type="number" min={0} max={100} defaultValue={product.progress ?? 0} key={product.progress} onBlur={async e => {
+                const v = Math.min(100, Math.max(0, Number(e.target.value)));
+                await updateDoc(doc(db, "users", ownerUid, "products", productId!), { progress: v });
+                setProduct(p => p ? { ...p, progress: v } : p);
+              }} className="bg-surface-mid border-0 rounded-xl text-sm" />
             </div>
             <div>
               <label className="text-xs text-muted-foreground block mb-1.5">Status</label>
-              <select defaultValue={product.status} className="w-full bg-surface-mid border-0 rounded-xl p-2 text-foreground text-sm">
+              <select defaultValue={product.status} key={product.status} onChange={async e => {
+                const v = e.target.value;
+                await updateDoc(doc(db, "users", ownerUid, "products", productId!), { status: v });
+                setProduct(p => p ? { ...p, status: v } : p);
+                await logActivity(`Status alterado para: ${v}`);
+              }} className="w-full bg-surface-mid border-0 rounded-xl p-2 text-foreground text-sm">
                 <option>Em desenvolvimento</option>
                 <option>Lançado</option>
                 <option>Pausado</option>
               </select>
             </div>
-            <Button className="w-full rounded-xl bg-primary hover:bg-primary/80 text-sm">Salvar Alterações</Button>
           </div>
           <div className="mt-4 p-4 rounded-2xl border border-red-500/20 space-y-2">
             <p className="text-xs font-semibold text-red-400 flex items-center gap-1.5">
@@ -619,98 +807,6 @@ export default function ProductDetail() {
                 </div>
               </div>
             )}
-          </div>
-        </DrawerSection>
-
-        {/* ── Inteligência de Mercado ───────────────────────────────── */}
-        <DrawerSection id="mercado" icon={Globe} title="Definição de Mercado" open={isOpen("mercado")} onToggle={toggleSection}>
-          <textarea
-            value={mercado}
-            onChange={e => { setMercado(e.target.value); saveField("mercado", e.target.value); }}
-            placeholder="Descreva o mercado-alvo, tamanho, oportunidades e posicionamento..."
-            className="w-full h-32 bg-surface-mid rounded-xl p-3 text-sm text-foreground placeholder:text-muted-foreground resize-none border-0 outline-none focus:ring-1 focus:ring-primary/40"
-          />
-        </DrawerSection>
-
-        <DrawerSection id="tendenciaComportamento" icon={TrendingUp} title="Tendências de Comportamento" open={isOpen("tendenciaComportamento")} onToggle={toggleSection}>
-          <textarea
-            value={tendenciaComportamento}
-            onChange={e => { setTendenciaComportamento(e.target.value); saveField("tendenciaComportamento", e.target.value); }}
-            placeholder="Mudanças no comportamento do consumidor, hábitos emergentes..."
-            className="w-full h-32 bg-surface-mid rounded-xl p-3 text-sm text-foreground placeholder:text-muted-foreground resize-none border-0 outline-none focus:ring-1 focus:ring-primary/40"
-          />
-        </DrawerSection>
-
-        <DrawerSection id="tendenciaConteudo" icon={FileText} title="Tendências de Conteúdo" open={isOpen("tendenciaConteudo")} onToggle={toggleSection}>
-          <textarea
-            value={tendenciaConteudo}
-            onChange={e => { setTendenciaConteudo(e.target.value); saveField("tendenciaConteudo", e.target.value); }}
-            placeholder="Formatos em alta, temas relevantes, linguagem do setor..."
-            className="w-full h-32 bg-surface-mid rounded-xl p-3 text-sm text-foreground placeholder:text-muted-foreground resize-none border-0 outline-none focus:ring-1 focus:ring-primary/40"
-          />
-        </DrawerSection>
-
-        <DrawerSection id="concorrentes" icon={BarChart2} title="Análise de Concorrentes" open={isOpen("concorrentes")} onToggle={toggleSection}>
-          <textarea
-            value={concorrentes}
-            onChange={e => { setConcorrentes(e.target.value); saveField("concorrentes", e.target.value); }}
-            placeholder="Principais concorrentes, diferenciais, pontos fracos e fortes..."
-            className="w-full h-32 bg-surface-mid rounded-xl p-3 text-sm text-foreground placeholder:text-muted-foreground resize-none border-0 outline-none focus:ring-1 focus:ring-primary/40"
-          />
-        </DrawerSection>
-
-        <DrawerSection id="tendenciaMarketing" icon={Megaphone} title="Tendências de Marketing" open={isOpen("tendenciaMarketing")} onToggle={toggleSection}>
-          <textarea
-            value={tendenciaMarketing}
-            onChange={e => { setTendenciaMarketing(e.target.value); saveField("tendenciaMarketing", e.target.value); }}
-            placeholder="Canais em crescimento, estratégias eficazes, benchmarks do setor..."
-            className="w-full h-32 bg-surface-mid rounded-xl p-3 text-sm text-foreground placeholder:text-muted-foreground resize-none border-0 outline-none focus:ring-1 focus:ring-primary/40"
-          />
-        </DrawerSection>
-
-        <DrawerSection id="demografico" icon={Target} title="Definição Demográfica" open={isOpen("demografico")} onToggle={toggleSection}>
-          <textarea
-            value={demografico}
-            onChange={e => { setDemografico(e.target.value); saveField("demografico", e.target.value); }}
-            placeholder="Idade, gênero, renda, localização, escolaridade, estilo de vida..."
-            className="w-full h-32 bg-surface-mid rounded-xl p-3 text-sm text-foreground placeholder:text-muted-foreground resize-none border-0 outline-none focus:ring-1 focus:ring-primary/40"
-          />
-        </DrawerSection>
-
-        <DrawerSection id="preco" icon={DollarSign} title="Precificação" open={isOpen("preco")} onToggle={toggleSection}>
-          <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <span className="text-xs text-muted-foreground">R$ 0</span>
-              <span className="text-lg font-bold text-primary">
-                {preco.toLocaleString("pt-BR", { style: "currency", currency: "BRL", minimumFractionDigits: 0 })}
-              </span>
-              <span className="text-xs text-muted-foreground">R$ 20.000</span>
-            </div>
-            <div className="relative px-1">
-              <input
-                type="range"
-                min={0}
-                max={20000}
-                step={50}
-                value={preco}
-                onChange={e => { const v = Number(e.target.value); setPreco(v); saveField("preco", v); }}
-                className="w-full h-2 rounded-full appearance-none cursor-pointer"
-                style={{
-                  background: `linear-gradient(to right, hsl(var(--primary)) 0%, hsl(var(--primary)) ${(preco / 20000) * 100}%, hsl(var(--surface-high)) ${(preco / 20000) * 100}%, hsl(var(--surface-high)) 100%)`
-                }}
-              />
-            </div>
-            <div className="flex gap-2 flex-wrap">
-              {[99, 297, 497, 997, 1997, 4997, 9997].map(v => (
-                <button
-                  key={v}
-                  onClick={() => { setPreco(v); saveField("preco", v); }}
-                  className={"px-2.5 py-1 rounded-lg text-xs font-medium transition-colors " + (preco === v ? "bg-primary text-background" : "bg-surface-mid text-muted-foreground hover:bg-surface-high")}
-                >
-                  {v.toLocaleString("pt-BR", { style: "currency", currency: "BRL", minimumFractionDigits: 0 })}
-                </button>
-              ))}
-            </div>
           </div>
         </DrawerSection>
 
