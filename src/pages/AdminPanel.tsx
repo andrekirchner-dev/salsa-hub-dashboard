@@ -18,7 +18,10 @@ import { useNavigate } from "react-router-dom";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 const ADMIN_EMAILS = ["kirchner.andre@gmail.com", "lucas.xaviercr97@gmail.com"];
-const ADMIN_PIN = "kirchner";
+const ADMIN_PINS: Record<string, string> = {
+  "kirchner.andre@gmail.com": "kirchner",
+  "lucas.xaviercr97@gmail.com": "xavier",
+};
 
 // ── Interfaces ────────────────────────────────────────────────────────────────
 interface Company { id: string; name: string; plan: string; members: number; createdAt: any; status: "Ativa" | "Inativa"; }
@@ -54,7 +57,7 @@ function generateCode(role: string): string {
 }
 
 // ── PIN Lock Screen ───────────────────────────────────────────────────────────
-function PinLockScreen({ onUnlock }: { onUnlock: () => void }) {
+function PinLockScreen({ onUnlock, userEmail }: { onUnlock: () => void; userEmail: string }) {
   const navigate = useNavigate();
   const [pin, setPin] = useState("");
   const [show, setShow] = useState(false);
@@ -63,7 +66,8 @@ function PinLockScreen({ onUnlock }: { onUnlock: () => void }) {
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (pin === ADMIN_PIN) {
+    const correctPin = ADMIN_PINS[userEmail] ?? "";
+    if (correctPin && pin === correctPin) {
       onUnlock();
     } else {
       setError(true);
@@ -267,7 +271,7 @@ export default function AdminPanel() {
   }, [uid, unlocked]);
 
   if (!userEmail || !ADMIN_EMAILS.includes(userEmail)) return null;
-  if (!unlocked) return <PinLockScreen onUnlock={() => setUnlocked(true)} />;
+  if (!unlocked) return <PinLockScreen onUnlock={() => setUnlocked(true)} userEmail={userEmail} />;
 
   const pendingCount = requests.filter(r => r.status === "Pendente").length;
   const activeCodesCount = roleCodes.filter(c => c.active).length;

@@ -159,12 +159,12 @@ service cloud.firestore {
     }
 
     // ── Tarefas globais (atribuídas a pessoas ou equipes) ────────────────────
-    // O criador e o destinatário (por uid ou equipe) podem ler e atualizar.
+    // O criador e qualquer destinatário (assignedToUids array) podem ler e atualizar.
     // Apenas o criador pode deletar.
     match /tasks/{taskId} {
       allow read: if isAuthenticated() && (
         resource.data.createdByUid == request.auth.uid ||
-        resource.data.assignedToUid == request.auth.uid
+        request.auth.uid in resource.data.assignedToUids
       );
 
       allow create: if isAuthenticated()
@@ -172,7 +172,7 @@ service cloud.firestore {
 
       allow update: if isAuthenticated() && (
         resource.data.createdByUid == request.auth.uid ||
-        resource.data.assignedToUid == request.auth.uid
+        request.auth.uid in resource.data.assignedToUids
       );
 
       allow delete: if isAuthenticated()
@@ -182,7 +182,7 @@ service cloud.firestore {
       match /subtasks/{subtaskId} {
         allow read, write: if isAuthenticated() && (
           get(/databases/$(database)/documents/tasks/$(taskId)).data.createdByUid == request.auth.uid ||
-          get(/databases/$(database)/documents/tasks/$(taskId)).data.assignedToUid == request.auth.uid
+          request.auth.uid in get(/databases/$(database)/documents/tasks/$(taskId)).data.assignedToUids
         );
       }
     }

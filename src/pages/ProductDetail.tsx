@@ -19,7 +19,7 @@ import {
 } from "firebase/firestore";
 import { ref, uploadBytesResumable, getDownloadURL } from "firebase/storage";
 
-interface TaskCard { id: string; title: string; status: "COMPLETA" | "ATIVA" | "BLOQUEADA" | "MILESTONE"; }
+interface TaskCard { id: string; title: string; status: "COMPLETA" | "ATIVA" | "BLOQUEADA" | "MILESTONE"; assignedToNames?: string[]; responsibleName?: string; }
 interface TeamMember { id: string; name: string; role: string; }
 interface ActivityItem { id: string; action: string; user: string; createdAt: any; }
 
@@ -40,6 +40,10 @@ interface Product {
   tendenciaMarketing?: string;
   demografico?: string;
   preco?: number;
+  responsibleUid?: string;
+  responsibleName?: string;
+  managerUid?: string;
+  managerName?: string;
 }
 
 const getTaskStyle = (status: TaskCard["status"]) => {
@@ -101,6 +105,24 @@ export default function ProductDetail() {
   const [allUsers, setAllUsers] = useState<RegisteredUser[]>([]);
   const [loadingUsers, setLoadingUsers] = useState(false);
   const [memberDialogOpen, setMemberDialogOpen] = useState(false);
+  const [memberDialogTab, setMemberDialogTab] = useState<"member" | "team" | "responsible">("member");
+
+  // Teams for "add team" tab
+  interface TeamRef { id: string; name: string; ownerUid: string; }
+  const [allTeams, setAllTeams] = useState<TeamRef[]>([]);
+  const [teamSearch, setTeamSearch] = useState("");
+  const [addingTeam, setAddingTeam] = useState(false);
+
+  // Responsible / manager
+  const [responsibleUid, setResponsibleUid] = useState<string>("");
+  const [managerUid, setManagerUid] = useState<string>("");
+  const [savingRoles, setSavingRoles] = useState(false);
+
+  // Task dialog state
+  const [taskDialogOpen, setTaskDialogOpen] = useState(false);
+  const [taskAssignees, setTaskAssignees] = useState<RegisteredUser[]>([]);
+  const [taskAssigneeSearch, setTaskAssigneeSearch] = useState("");
+  const [taskResponsible, setTaskResponsible] = useState("");
 
   // Color palette state
   const [colorPalette, setColorPalette] = useState([
@@ -138,16 +160,20 @@ export default function ProductDetail() {
     setOpenSections(prev => prev.includes(id) ? prev.filter(s => s !== id) : [...prev, id]);
   const isOpen = (id: string) => openSections.includes(id);
 
-  // Load registered users when member dialog opens
+  // Load registered users when member or task dialog opens
   useEffect(() => {
-    if (!memberDialogOpen) return;
+    if (!memberDialogOpen && !taskDialogOpen) return;
     setLoadingUsers(true);
     getDocs(collection(db, "profiles")).then(snap => {
       const existing = new Set(teamMembers.map(m => m.id));
       setAllUsers(snap.docs.filter(d => d.id !== uid && !existing.has(d.id)).map(d => ({ uid: d.id, ...d.data() } as RegisteredUser)));
       setLoadingUsers(false);
     }).catch(() => setLoadingUsers(false));
-  }, [memberDialogOpen, uid, teamMembers]);
+    // Load owner's teams for the "team" tab
+    getDocs(collection(db, "users", ownerUid, "teams")).then(snap => {
+      setAllTeams(snap.docs.map(d => ({ id: d.id, name: d.data().name ?? d.id, ownerUid })));
+    }).catch(() => {});
+  }, [memberDialogOpen, taskDialogOpen, uid, ownerUid, teamMembers]);
 
   // Load product
   useEffect(() => {
@@ -165,6 +191,8 @@ export default function ProductDetail() {
         setTendenciaMarketing(d.tendenciaMarketing ?? "");
         setDemografico(d.demografico ?? "");
         setPreco(d.preco ?? 0);
+        setResponsibleUid(d.responsibleUid ?? "");
+        setManagerUid(d.managerUid ?? "");
         if (d.colors) {
           setColorPalette(prev => prev.map(c => ({
             ...c,
@@ -205,11 +233,41 @@ export default function ProductDetail() {
 
   const handleAddTask = async () => {
     if (!newTaskTitle.trim() || !ownerUid || !productId) return;
-    await addDoc(collection(db, "users", ownerUid, "products", productId, "tasks"), {
-      title: newTaskTitle.trim(), status: newTaskStatus, createdAt: serverTimestamp(),
-    });
+    const responsibleUser = taskAssignees.find(u => u.uid === taskResponsible)
+      ?? teamMembers.find(m => m.id === taskResponsible);
+    const taskData = {
+      title: newTaskTitle.trim(),
+      status: newTaskStatus,
+      createdAt: serverTimestamp(),
+      createdByUid: uid,
+      assignedToUids: taskAssignees.map(u => u.uid),
+      assignedToNames: taskAssignees.map(u => u.name),
+      responsibleUid: taskResponsible || null,
+      responsibleName: (responsibleUser as any)?.name ?? "",
+      productId,
+      productOwnerUid: ownerUid,
+      productName: product?.name ?? "",
+    };
+    // Write to product-level tasks (shown in ProductDetail)
+    const taskRef = await addDoc(collection(db, "users", ownerUid, "products", productId, "tasks"), taskData);
+    // Write to global tasks collection so assignees can see it in their task feed
+    await setDoc(doc(db, "tasks", taskRef.id), taskData);
+    // Notify each assignee
+    for (const assignee of taskAssignees) {
+      await addDoc(collection(db, "users", assignee.uid, "notifications"), {
+        type: "task",
+        title: "Nova Tarefa Atribuída",
+        description: `Você foi atribuído à tarefa "${newTaskTitle.trim()}" no produto "${product?.name}".`,
+        read: false,
+        createdAt: serverTimestamp(),
+      });
+    }
     await logActivity(`Tarefa adicionada: ${newTaskTitle.trim()}`);
     setNewTaskTitle("");
+    setTaskAssignees([]);
+    setTaskResponsible("");
+    setTaskAssigneeSearch("");
+    setTaskDialogOpen(false);
   };
 
   const handleDeleteTask = async (taskId: string, title: string) => {
@@ -245,6 +303,51 @@ export default function ProductDetail() {
     });
     await logActivity(`Membro adicionado: ${user.name}`);
     setMemberSearch("");
+    setMemberDialogOpen(false);
+  };
+
+  // Add an entire team's members to the product
+  const handleAddTeam = async (team: { id: string; name: string; ownerUid: string }) => {
+    if (!ownerUid || !productId || !product || addingTeam) return;
+    setAddingTeam(true);
+    const memberSnap = await getDocs(collection(db, "users", team.ownerUid, "teams", team.id, "members"));
+    for (const d of memberSnap.docs) {
+      const m = d.data();
+      const memberUid = m.uid ?? d.id;
+      await setDoc(doc(db, "users", ownerUid, "products", productId, "team", memberUid), {
+        name: m.name, role: m.role, createdAt: serverTimestamp(),
+      });
+      await setDoc(doc(db, "users", memberUid, "sharedProducts", productId), {
+        id: productId, name: product.name, type: product.type,
+        status: product.status, progress: product.progress ?? 0,
+        ownerUid, isShared: true, addedAt: serverTimestamp(),
+      });
+      await addDoc(collection(db, "users", memberUid, "notifications"), {
+        type: "product",
+        title: "Acesso ao produto",
+        description: `Sua equipe "${team.name}" foi adicionada ao produto "${product.name}".`,
+        read: false, createdAt: serverTimestamp(),
+      });
+    }
+    await logActivity(`Equipe "${team.name}" adicionada ao produto`);
+    setAddingTeam(false);
+    setMemberDialogOpen(false);
+  };
+
+  // Save responsible / manager
+  const handleSaveResponsible = async () => {
+    if (!ownerUid || !productId) return;
+    setSavingRoles(true);
+    const responsibleUser = allUsers.find(u => u.uid === responsibleUid) ?? teamMembers.find(m => m.id === responsibleUid);
+    const managerUser = allUsers.find(u => u.uid === managerUid) ?? teamMembers.find(m => m.id === managerUid);
+    await updateDoc(doc(db, "users", ownerUid, "products", productId), {
+      responsibleUid,
+      responsibleName: (responsibleUser as any)?.name ?? "",
+      managerUid,
+      managerName: (managerUser as any)?.name ?? "",
+    });
+    await logActivity("Responsável/Gerente do projeto atualizados");
+    setSavingRoles(false);
     setMemberDialogOpen(false);
   };
 
@@ -395,18 +498,110 @@ export default function ProductDetail() {
           />
         </div>
 
+        {/* Task creation dialog */}
+        <Dialog open={taskDialogOpen} onOpenChange={v => { setTaskDialogOpen(v); if (!v) { setNewTaskTitle(""); setNewTaskStatus("ATIVA"); setTaskAssignees([]); setTaskAssigneeSearch(""); setTaskResponsible(""); } }}>
+          <DialogContent className="bg-surface-low border-surface-mid max-w-md">
+            <DialogHeader><DialogTitle>Nova Tarefa</DialogTitle></DialogHeader>
+            <div className="space-y-4">
+              <Input
+                placeholder="Título da tarefa *"
+                value={newTaskTitle}
+                onChange={e => setNewTaskTitle(e.target.value)}
+                className="bg-surface-mid border-0 rounded-xl text-sm"
+              />
+              <div>
+                <label className="text-xs text-muted-foreground block mb-1.5">Status</label>
+                <select value={newTaskStatus} onChange={e => setNewTaskStatus(e.target.value as any)} className="w-full bg-surface-mid border-0 rounded-xl p-2.5 text-foreground text-sm">
+                  <option value="ATIVA">Ativa</option>
+                  <option value="BLOQUEADA">Bloqueada</option>
+                  <option value="COMPLETA">Completa</option>
+                  <option value="MILESTONE">Milestone</option>
+                </select>
+              </div>
+
+              {/* Assignees picker */}
+              <div>
+                <label className="text-xs text-muted-foreground block mb-1.5">Atribuir a</label>
+                {taskAssignees.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5 mb-2">
+                    {taskAssignees.map(u => (
+                      <span key={u.uid} className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-primary/20 text-primary text-xs font-medium">
+                        {u.name}
+                        <button onClick={() => setTaskAssignees(prev => prev.filter(a => a.uid !== u.uid))}><X className="w-3 h-3" /></button>
+                      </span>
+                    ))}
+                  </div>
+                )}
+                <div className="relative mb-2">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+                  <Input
+                    placeholder="Buscar membro ou usuário..."
+                    value={taskAssigneeSearch}
+                    onChange={e => setTaskAssigneeSearch(e.target.value)}
+                    className="pl-8 bg-surface-mid border-0 rounded-xl text-sm"
+                  />
+                </div>
+                <div className="max-h-36 overflow-y-auto space-y-1 rounded-xl bg-surface-mid p-1">
+                  {loadingUsers ? (
+                    <p className="text-xs text-muted-foreground text-center py-3">Carregando...</p>
+                  ) : (() => {
+                    const combined: RegisteredUser[] = [
+                      ...teamMembers.map(m => ({ uid: m.id, name: m.name, role: m.role, email: "" })),
+                      ...allUsers,
+                    ].filter((u, i, arr) => arr.findIndex(a => a.uid === u.uid) === i);
+                    const visible = combined.filter(u =>
+                      !taskAssigneeSearch.trim() ||
+                      u.name.toLowerCase().includes(taskAssigneeSearch.toLowerCase())
+                    );
+                    if (visible.length === 0) return <p className="text-xs text-muted-foreground text-center py-3">Nenhum usuário encontrado.</p>;
+                    return visible.map(u => {
+                      const isSelected = !!taskAssignees.find(a => a.uid === u.uid);
+                      return (
+                        <button key={u.uid}
+                          onClick={() => setTaskAssignees(prev => isSelected ? prev.filter(a => a.uid !== u.uid) : [...prev, u])}
+                          className={"w-full flex items-center gap-2 p-2 rounded-lg text-left transition-colors " + (isSelected ? "bg-primary/20" : "hover:bg-surface-high")}>
+                          <div className="w-7 h-7 rounded-full bg-primary/20 text-primary flex items-center justify-center text-[10px] font-bold flex-shrink-0">
+                            {u.name.split(" ").map((n: string) => n[0]).join("").slice(0, 2).toUpperCase()}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <p className="text-xs font-medium text-foreground truncate">{u.name}</p>
+                            <p className="text-[10px] text-muted-foreground truncate">{u.role}</p>
+                          </div>
+                          {isSelected && <div className="w-4 h-4 rounded-full bg-primary flex items-center justify-center flex-shrink-0"><span className="text-background text-[10px]">✓</span></div>}
+                        </button>
+                      );
+                    });
+                  })()}
+                </div>
+              </div>
+
+              {/* Responsible (only if assignees selected) */}
+              {taskAssignees.length > 0 && (
+                <div>
+                  <label className="text-xs text-muted-foreground block mb-1.5">Responsável pela tarefa</label>
+                  <select value={taskResponsible} onChange={e => setTaskResponsible(e.target.value)} className="w-full bg-surface-mid border-0 rounded-xl p-2.5 text-foreground text-sm">
+                    <option value="">Nenhum</option>
+                    {taskAssignees.map(u => <option key={u.uid} value={u.uid}>{u.name} — {u.role}</option>)}
+                  </select>
+                </div>
+              )}
+
+              <Button
+                className="w-full rounded-xl bg-primary hover:bg-primary/80"
+                onClick={handleAddTask}
+                disabled={!newTaskTitle.trim()}
+              >
+                Criar Tarefa
+              </Button>
+            </div>
+          </DialogContent>
+        </Dialog>
+
         {/* TAREFAS */}
         <DrawerSection id="tasks" icon={CheckSquare} title="Tarefas" badge={activeTasks + pendingTasks} open={isOpen("tasks")} onToggle={toggleSection}>
-          <div className="flex gap-2 mb-3">
-            <Input placeholder="Nova tarefa..." value={newTaskTitle} onChange={e => setNewTaskTitle(e.target.value)} onKeyDown={e => e.key === "Enter" && handleAddTask()} className="bg-surface-mid border-0 rounded-xl text-sm flex-1" />
-            <select value={newTaskStatus} onChange={e => setNewTaskStatus(e.target.value as any)} className="bg-surface-mid border-0 rounded-xl p-2 text-foreground text-xs">
-              <option value="ATIVA">Ativa</option>
-              <option value="BLOQUEADA">Bloqueada</option>
-              <option value="COMPLETA">Completa</option>
-              <option value="MILESTONE">Milestone</option>
-            </select>
-            <Button size="sm" onClick={handleAddTask} disabled={!newTaskTitle.trim()} className="rounded-xl bg-primary hover:bg-primary/80 text-background">
-              <Plus className="w-4 h-4" />
+          <div className="flex justify-end mb-3">
+            <Button size="sm" onClick={() => setTaskDialogOpen(true)} className="rounded-2xl bg-primary hover:bg-primary/80 text-sm">
+              <Plus className="w-4 h-4 mr-1" />Nova Tarefa
             </Button>
           </div>
           {tasks.length === 0 ? (
@@ -418,17 +613,27 @@ export default function ProductDetail() {
                 return (
                   <div
                     key={task.id}
-                    className={"flex items-center justify-between p-3 bg-surface-mid rounded-2xl group cursor-pointer hover:bg-surface-high transition-colors " + s.border}
+                    className={"flex items-start justify-between p-3 bg-surface-mid rounded-2xl group cursor-pointer hover:bg-surface-high transition-colors " + s.border}
                     onClick={() => navigate(`/products/${productId}/tasks/${task.id}`)}
                   >
-                    <p className="text-sm text-foreground flex-1 pr-3">{task.title}</p>
-                    <Badge className={"text-[10px] px-2 py-0.5 flex-shrink-0 " + s.badge}>{s.label}</Badge>
-                    <button
-                      onClick={(e) => { e.stopPropagation(); handleDeleteTask(task.id, task.title); }}
-                      className="ml-2 opacity-0 group-hover:opacity-100 transition-opacity text-red-400"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
+                    <div className="flex-1 pr-3 min-w-0">
+                      <p className="text-sm text-foreground">{task.title}</p>
+                      {task.assignedToNames && task.assignedToNames.length > 0 && (
+                        <p className="text-[10px] text-muted-foreground mt-0.5 truncate">
+                          👤 {task.assignedToNames.join(", ")}
+                          {task.responsibleName ? ` · Resp: ${task.responsibleName}` : ""}
+                        </p>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-1.5 flex-shrink-0">
+                      <Badge className={"text-[10px] px-2 py-0.5 " + s.badge}>{s.label}</Badge>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); handleDeleteTask(task.id, task.title); }}
+                        className="opacity-0 group-hover:opacity-100 transition-opacity text-red-400"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
                   </div>
                 );
               })}
@@ -618,63 +823,131 @@ export default function ProductDetail() {
         {/* EQUIPE */}
         <DrawerSection id="team" icon={Users} title="Equipe do Produto" badge={teamMembers.length} open={isOpen("team")} onToggle={toggleSection}>
           <div className="flex justify-end mb-3">
-            <Dialog open={memberDialogOpen} onOpenChange={setMemberDialogOpen}>
+            <Dialog open={memberDialogOpen} onOpenChange={v => { setMemberDialogOpen(v); if (!v) { setMemberSearch(""); setTeamSearch(""); setMemberDialogTab("member"); } }}>
               <DialogTrigger asChild>
                 <Button size="sm" className="rounded-2xl bg-primary hover:bg-primary/80 text-sm">
                   <Plus className="w-4 h-4 mr-1" />Adicionar
                 </Button>
               </DialogTrigger>
-              <DialogContent className="bg-surface-low border-surface-mid">
-                <DialogHeader><DialogTitle>Adicionar Membro</DialogTitle></DialogHeader>
-                <div className="space-y-3">
-                  <div className="relative">
-                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                    <Input
-                      placeholder="Buscar por nome ou e-mail..."
-                      value={memberSearch}
-                      onChange={e => setMemberSearch(e.target.value)}
-                      className="pl-9 bg-surface-mid border-0 rounded-xl text-sm"
-                    />
-                  </div>
-                  {loadingUsers ? (
-                    <p className="text-xs text-muted-foreground text-center py-4">Carregando usuários...</p>
-                  ) : (
-                    <div className="max-h-60 overflow-y-auto space-y-1">
-                      {allUsers
-                        .filter(u =>
-                          !memberSearch.trim() ? true :
-                          u.name.toLowerCase().includes(memberSearch.toLowerCase()) ||
-                          u.email.toLowerCase().includes(memberSearch.toLowerCase())
-                        )
-                        .map(u => (
-                          <button
-                            key={u.uid}
-                            onClick={() => handleAddMember(u)}
-                            className="w-full flex items-center gap-3 p-3 rounded-xl hover:bg-surface-mid transition-colors text-left"
-                          >
-                            <div className="w-8 h-8 rounded-full bg-primary/20 text-primary flex items-center justify-center font-semibold text-xs flex-shrink-0">
-                              {u.name.split(" ").map((n: string) => n[0]).join("").slice(0, 2).toUpperCase()}
-                            </div>
-                            <div className="flex-1 min-w-0">
-                              <p className="text-sm font-medium text-foreground truncate">{u.name}</p>
-                              <p className="text-xs text-muted-foreground truncate">{u.role || u.email}</p>
-                            </div>
-                          </button>
-                        ))
-                      }
-                      {allUsers.filter(u =>
-                        !memberSearch.trim() ? true :
-                        u.name.toLowerCase().includes(memberSearch.toLowerCase()) ||
-                        u.email.toLowerCase().includes(memberSearch.toLowerCase())
-                      ).length === 0 && (
-                        <p className="text-xs text-muted-foreground text-center py-4">Nenhum usuário encontrado.</p>
-                      )}
-                    </div>
-                  )}
+              <DialogContent className="bg-surface-low border-surface-mid max-w-md">
+                <DialogHeader><DialogTitle>Equipe do Produto</DialogTitle></DialogHeader>
+
+                {/* Tab switcher */}
+                <div className="flex gap-1.5 mb-3 bg-surface-mid rounded-xl p-1">
+                  {(["member", "team", "responsible"] as const).map(tab => (
+                    <button key={tab} onClick={() => setMemberDialogTab(tab)}
+                      className={"flex-1 py-1.5 rounded-lg text-xs font-medium transition-colors " +
+                        (memberDialogTab === tab ? "bg-primary text-background" : "text-muted-foreground hover:text-foreground")}>
+                      {tab === "member" ? "Membro" : tab === "team" ? "Equipe" : "Responsável"}
+                    </button>
+                  ))}
                 </div>
+
+                {memberDialogTab === "member" && (
+                  <div className="space-y-3">
+                    <div className="relative">
+                      <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                      <Input placeholder="Buscar por nome ou e-mail..." value={memberSearch}
+                        onChange={e => setMemberSearch(e.target.value)}
+                        className="pl-9 bg-surface-mid border-0 rounded-xl text-sm" />
+                    </div>
+                    {loadingUsers ? (
+                      <p className="text-xs text-muted-foreground text-center py-4">Carregando...</p>
+                    ) : (
+                      <div className="max-h-60 overflow-y-auto space-y-1">
+                        {allUsers
+                          .filter(u => !memberSearch.trim() || u.name.toLowerCase().includes(memberSearch.toLowerCase()) || u.email.toLowerCase().includes(memberSearch.toLowerCase()))
+                          .map(u => (
+                            <button key={u.uid} onClick={() => handleAddMember(u)}
+                              className="w-full flex items-center gap-3 p-3 rounded-xl hover:bg-surface-mid transition-colors text-left">
+                              <div className="w-8 h-8 rounded-full bg-primary/20 text-primary flex items-center justify-center font-semibold text-xs flex-shrink-0">
+                                {u.name.split(" ").map((n: string) => n[0]).join("").slice(0, 2).toUpperCase()}
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <p className="text-sm font-medium text-foreground truncate">{u.name}</p>
+                                <p className="text-xs text-muted-foreground truncate">{u.role || u.email}</p>
+                              </div>
+                            </button>
+                          ))}
+                        {allUsers.filter(u => !memberSearch.trim() || u.name.toLowerCase().includes(memberSearch.toLowerCase()) || u.email.toLowerCase().includes(memberSearch.toLowerCase())).length === 0 && (
+                          <p className="text-xs text-muted-foreground text-center py-4">Nenhum usuário encontrado.</p>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {memberDialogTab === "team" && (
+                  <div className="space-y-3">
+                    <div className="relative">
+                      <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                      <Input placeholder="Buscar equipe..." value={teamSearch}
+                        onChange={e => setTeamSearch(e.target.value)}
+                        className="pl-9 bg-surface-mid border-0 rounded-xl text-sm" />
+                    </div>
+                    <div className="max-h-60 overflow-y-auto space-y-1">
+                      {allTeams.filter(t => !teamSearch.trim() || t.name.toLowerCase().includes(teamSearch.toLowerCase())).map(t => (
+                        <button key={t.id} onClick={() => handleAddTeam(t)} disabled={addingTeam}
+                          className="w-full flex items-center gap-3 p-3 rounded-xl hover:bg-surface-mid transition-colors text-left disabled:opacity-50">
+                          <div className="w-8 h-8 rounded-full bg-purple-500/20 text-purple-400 flex items-center justify-center font-semibold text-xs flex-shrink-0">
+                            {t.name.slice(0, 2).toUpperCase()}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm font-medium text-foreground truncate">{t.name}</p>
+                            <p className="text-xs text-muted-foreground">Adicionar todos os membros</p>
+                          </div>
+                          <Users className="w-4 h-4 text-muted-foreground flex-shrink-0" />
+                        </button>
+                      ))}
+                      {allTeams.length === 0 && <p className="text-xs text-muted-foreground text-center py-4">Nenhuma equipe encontrada.</p>}
+                    </div>
+                  </div>
+                )}
+
+                {memberDialogTab === "responsible" && (
+                  <div className="space-y-4">
+                    <div>
+                      <label className="text-xs text-muted-foreground block mb-1.5">Membro Responsável pelo Projeto</label>
+                      <select value={responsibleUid} onChange={e => setResponsibleUid(e.target.value)}
+                        className="w-full bg-surface-mid border-0 rounded-xl p-2.5 text-foreground text-sm">
+                        <option value="">Nenhum selecionado</option>
+                        {teamMembers.map(m => <option key={m.id} value={m.id}>{m.name} — {m.role}</option>)}
+                        {allUsers.map(u => <option key={u.uid} value={u.uid}>{u.name} — {u.role}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="text-xs text-muted-foreground block mb-1.5">Gerente do Projeto</label>
+                      <select value={managerUid} onChange={e => setManagerUid(e.target.value)}
+                        className="w-full bg-surface-mid border-0 rounded-xl p-2.5 text-foreground text-sm">
+                        <option value="">Nenhum selecionado</option>
+                        {teamMembers.map(m => <option key={m.id} value={m.id}>{m.name} — {m.role}</option>)}
+                        {allUsers.map(u => <option key={u.uid} value={u.uid}>{u.name} — {u.role}</option>)}
+                      </select>
+                    </div>
+                    <Button onClick={handleSaveResponsible} disabled={savingRoles} className="w-full rounded-xl bg-primary hover:bg-primary/80">
+                      {savingRoles ? "Salvando..." : "Salvar"}
+                    </Button>
+                  </div>
+                )}
               </DialogContent>
             </Dialog>
           </div>
+
+          {/* Responsible / Manager display */}
+          {(product.responsibleName || product.managerName) && (
+            <div className="flex gap-2 mb-3 flex-wrap">
+              {product.responsibleName && (
+                <span className="text-xs px-2.5 py-1 rounded-full bg-primary/10 text-primary font-medium">
+                  👤 Responsável: {product.responsibleName}
+                </span>
+              )}
+              {product.managerName && (
+                <span className="text-xs px-2.5 py-1 rounded-full bg-purple-500/10 text-purple-400 font-medium">
+                  🗂 Gerente: {product.managerName}
+                </span>
+              )}
+            </div>
+          )}
           {teamMembers.length === 0 ? (
             <p className="text-sm text-muted-foreground text-center py-4">Nenhum membro atribuído.</p>
           ) : (

@@ -9,8 +9,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { auth, db } from "@/integrations/firebase/client";
 import {
-  collection, onSnapshot, addDoc, deleteDoc, doc, query,
-  orderBy, serverTimestamp, getDoc, getDocs,
+  collection, onSnapshot, addDoc, deleteDoc, setDoc, updateDoc,
+  doc, query, orderBy, serverTimestamp, getDoc, getDocs,
 } from "firebase/firestore";
 
 function generateRoleCode(role: string): string {
@@ -40,9 +40,9 @@ const getRoleColor = (role: string) => {
 // ── Interfaces ────────────────────────────────────────────────────────────────
 
 interface TeamMember { id: string; name: string; email: string; role: string; uid?: string; }
-interface TeamItem { id: string; name: string; company: string; }
+interface TeamItem { id: string; name: string; company: string; ownerUid?: string; isSharedTeam?: boolean; teamFunction?: string; }
 interface RegisteredUser { uid: string; name: string; email: string; role: string; }
-interface PendingInvite { id: string; inviteeEmail: string; inviteeName: string; role: string; status: string; createdAt: any; }
+interface PendingInvite { id: string; inviteeEmail: string; inviteeName: string; role: string; status: string; roleCode?: string; createdAt: any; }
 
 const tabItems = [
   { value: "members", label: "Membros", emoji: "👥" },
@@ -83,6 +83,15 @@ export default function Team() {
   const [inviting, setInviting] = useState(false);
   const [invitedUids, setInvitedUids] = useState<Set<string>>(new Set());
 
+  // Settings editing
+  const [editTeamName, setEditTeamName] = useState("");
+  const [editTeamFunction, setEditTeamFunction] = useState("");
+  const [editSaving, setEditSaving] = useState(false);
+
+  // Email invite generated code result
+  const [emailInviteCode, setEmailInviteCode] = useState<string | null>(null);
+  const [emailInviteCopied, setEmailInviteCopied] = useState(false);
+
   // CEO RoleCode generator
   const [codeGenOpen, setCodeGenOpen] = useState(false);
   const [codeGenRole, setCodeGenRole] = useState("Analista");
@@ -118,8 +127,11 @@ export default function Team() {
   useEffect(() => {
     if (!uid || !selectedTeamId) { setMembers([]); return; }
     setMemberLoading(true);
+    // For shared teams, load members from the original owner's path
+    const team = teams.find(t => t.id === selectedTeamId);
+    const ownerUid = team?.ownerUid ?? uid;
     const q = query(
-      collection(db, "users", uid, "teams", selectedTeamId, "members"),
+      collection(db, "users", ownerUid, "teams", selectedTeamId, "members"),
       orderBy("name", "asc"),
     );
     const unsub = onSnapshot(q, (snap) => {
@@ -127,7 +139,7 @@ export default function Team() {
       setMemberLoading(false);
     });
     return unsub;
-  }, [uid, selectedTeamId]);
+  }, [uid, selectedTeamId, teams]);
 
   // ── Load pending invites for selected team ────────────────────────────────
   useEffect(() => {
@@ -161,6 +173,25 @@ export default function Team() {
     }).catch(() => setLoadingUsers(false));
   }, [inviteOpen, uid, members]);
 
+  // ── Sync edit fields when selected team changes ───────────────────────────
+  useEffect(() => {
+    if (selectedTeam) {
+      setEditTeamName(selectedTeam.name ?? "");
+      setEditTeamFunction((selectedTeam as any).teamFunction ?? "");
+    }
+  }, [selectedTeamId, teams]);
+
+  // ── Save team settings ────────────────────────────────────────────────────
+  const handleSaveTeamSettings = async () => {
+    if (!selectedTeamId || !editTeamName.trim()) return;
+    setEditSaving(true);
+    await updateDoc(doc(db, "users", uid, "teams", selectedTeamId), {
+      name: editTeamName.trim(),
+      teamFunction: editTeamFunction.trim(),
+    });
+    setEditSaving(false);
+  };
+
   // ── Create team ───────────────────────────────────────────────────────────
   const handleCreateTeam = async () => {
     if (!newTeamName.trim()) return;
@@ -185,12 +216,23 @@ export default function Team() {
     if (!selectedTeamId || !selectedTeam || inviting) return;
     setInviting(true);
 
-    // Add to team members
-    await addDoc(collection(db, "users", uid, "teams", selectedTeamId, "members"), {
+    // Add to team members (keyed by uid for dedup)
+    await setDoc(doc(db, "users", uid, "teams", selectedTeamId, "members", targetUser.uid), {
       name: targetUser.name,
       email: targetUser.email,
       role,
       uid: targetUser.uid,
+      createdAt: serverTimestamp(),
+    });
+
+    // Write team reference to the member's own teams collection → they see it on their Team page
+    await setDoc(doc(db, "users", targetUser.uid, "teams", selectedTeamId), {
+      name: selectedTeam.name,
+      company: selectedTeam.company ?? "",
+      teamFunction: (selectedTeam as any).teamFunction ?? "",
+      ownerUid: uid,
+      isSharedTeam: true,
+      role,
       createdAt: serverTimestamp(),
     });
 
@@ -226,6 +268,19 @@ export default function Team() {
     if (!selectedTeamId || !selectedTeam || !inviteEmail.trim() || inviting) return;
     setInviting(true);
 
+    // Auto-generate a roleCode for this invite
+    const code = generateRoleCode(inviteRole);
+    await addDoc(collection(db, "roleCodes"), {
+      code,
+      role: inviteRole,
+      maxUses: 1,
+      usedCount: 0,
+      active: true,
+      createdAt: serverTimestamp(),
+      createdBy: uid,
+      note: `Convite para ${inviteEmail.trim()}`,
+    });
+
     await addDoc(collection(db, "invites"), {
       inviterUid: uid,
       inviterName: userName,
@@ -233,17 +288,35 @@ export default function Team() {
       inviteeName: inviteName.trim() || inviteEmail.trim(),
       inviteeUid: null,
       role: inviteRole,
+      roleCode: code,
       teamId: selectedTeamId,
       teamName: selectedTeam.name,
       status: "pending",
       createdAt: serverTimestamp(),
     });
 
-    setInviteEmail("");
-    setInviteName("");
-    setInviteRole("Analista");
+    // Open mailto: so the inviter can send the email directly
+    const appUrl = window.location.origin;
+    const subject = encodeURIComponent(`Convite para o ${selectedTeam.name} no SalsaHub`);
+    const body = encodeURIComponent(
+      `Olá${inviteName.trim() ? `, ${inviteName.trim()}` : ""}!\n\n` +
+      `${userName} convidou você para fazer parte da equipe "${selectedTeam.name}" no SalsaHub como ${inviteRole}.\n\n` +
+      `Acesse o app: ${appUrl}\n\n` +
+      `Ao criar sua conta, use o código de acesso abaixo:\n\n` +
+      `🔑 Código: ${code}\n\n` +
+      `Este código é válido para 1 uso.\n\nBem-vindo(a)!`
+    );
+    window.open(`mailto:${inviteEmail.trim()}?subject=${subject}&body=${body}`, "_blank");
+
+    setEmailInviteCode(code);
     setInviting(false);
-    setInviteOpen(false);
+  };
+
+  const handleCopyEmailCode = () => {
+    if (!emailInviteCode) return;
+    navigator.clipboard.writeText(emailInviteCode).catch(() => {});
+    setEmailInviteCopied(true);
+    setTimeout(() => setEmailInviteCopied(false), 2000);
   };
 
   // Only show users when search has text
@@ -475,21 +548,36 @@ export default function Team() {
 
                     {/* ── Settings tab ──────────────────────────────────────── */}
                     <TabsContent value="settings" className="space-y-4">
-                      {canFullControl(userRole) ? (
+                      {canManageTeam(userRole) ? (
                         <div className="bg-surface-mid rounded-2xl p-4 space-y-4">
                           <div>
                             <label className="text-xs text-muted-foreground block mb-1.5">Nome da Equipe</label>
-                            <Input defaultValue={selectedTeam.name} className="bg-background border-0 rounded-xl text-sm" />
+                            <Input
+                              value={editTeamName}
+                              onChange={e => setEditTeamName(e.target.value)}
+                              className="bg-background border-0 rounded-xl text-sm"
+                            />
                           </div>
                           <div>
-                            <label className="text-xs text-muted-foreground block mb-1.5">Empresa</label>
-                            <Input defaultValue={selectedTeam.company} className="bg-background border-0 rounded-xl text-sm" />
+                            <label className="text-xs text-muted-foreground block mb-1.5">Função da Equipe</label>
+                            <Input
+                              value={editTeamFunction}
+                              onChange={e => setEditTeamFunction(e.target.value)}
+                              placeholder="Ex: Produto, Marketing, Tecnologia..."
+                              className="bg-background border-0 rounded-xl text-sm"
+                            />
                           </div>
-                          <Button className="w-full rounded-xl bg-primary hover:bg-primary/80">Salvar</Button>
+                          <Button
+                            onClick={handleSaveTeamSettings}
+                            disabled={editSaving || !editTeamName.trim()}
+                            className="w-full rounded-xl bg-primary hover:bg-primary/80"
+                          >
+                            {editSaving ? "Salvando..." : "Salvar Alterações"}
+                          </Button>
                         </div>
                       ) : (
                         <div className="text-center py-10 text-muted-foreground">
-                          <p className="text-sm">Apenas CEO, CFO, CMO ou COO podem alterar configurações.</p>
+                          <p className="text-sm">Apenas gestores podem alterar configurações da equipe.</p>
                         </div>
                       )}
                     </TabsContent>
@@ -521,7 +609,7 @@ export default function Team() {
       </Dialog>
 
       {/* ── Invite Dialog ───────────────────────────────────────────────────── */}
-      <Dialog open={inviteOpen} onOpenChange={(v) => { setInviteOpen(v); if (!v) { setInviteSearch(""); setInviteEmail(""); setInviteName(""); setInvitedUids(new Set()); } }}>
+      <Dialog open={inviteOpen} onOpenChange={(v) => { setInviteOpen(v); if (!v) { setInviteSearch(""); setInviteEmail(""); setInviteName(""); setInvitedUids(new Set()); setEmailInviteCode(null); setEmailInviteCopied(false); setCodeGenOpen(false); setGeneratedCode(null); } }}>
         <DialogContent className="bg-surface-low border-surface-mid max-w-md">
           <DialogHeader>
             <DialogTitle>Convidar para {selectedTeam?.name}</DialogTitle>
@@ -553,54 +641,6 @@ export default function Team() {
                   ))}
                 </select>
               </div>
-
-              {/* CEO-only: RoleCode generator */}
-              {userRole === "CEO" && (
-                <div className="mb-3 border border-surface-high rounded-xl overflow-hidden">
-                  <button
-                    onClick={() => { setCodeGenOpen(p => !p); setGeneratedCode(null); }}
-                    className="w-full flex items-center justify-between px-3 py-2.5 text-xs font-medium text-primary hover:bg-surface-mid transition-colors"
-                  >
-                    <span className="flex items-center gap-1.5"><Key className="w-3.5 h-3.5" />Gerar Código de Acesso</span>
-                    {codeGenOpen ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
-                  </button>
-                  {codeGenOpen && (
-                    <div className="px-3 pb-3 pt-2 space-y-3 border-t border-surface-high bg-surface-mid/50">
-                      <div className="grid grid-cols-2 gap-2">
-                        <div>
-                          <label className="text-[10px] text-muted-foreground block mb-1">Cargo</label>
-                          <select value={codeGenRole} onChange={e => { setCodeGenRole(e.target.value); setGeneratedCode(null); }}
-                            className="w-full bg-surface-mid border-0 rounded-lg p-1.5 text-foreground text-xs">
-                            {ALL_ROLES.map(r => <option key={r} value={r}>{r}</option>)}
-                          </select>
-                        </div>
-                        <div>
-                          <label className="text-[10px] text-muted-foreground block mb-1">Usos máx.</label>
-                          <Input type="number" min={1} max={100} value={codeGenMaxUses}
-                            onChange={e => setCodeGenMaxUses(Number(e.target.value))}
-                            className="bg-surface-mid border-0 rounded-lg text-xs h-8 px-2" />
-                        </div>
-                      </div>
-                      {generatedCode ? (
-                        <div className="space-y-2">
-                          <div className="bg-surface-mid rounded-lg p-2.5 text-center">
-                            <code className="text-sm font-mono font-bold text-primary tracking-widest">{generatedCode}</code>
-                          </div>
-                          <Button size="sm" onClick={handleCopyCode}
-                            className={"w-full rounded-lg text-xs " + (codeCopied ? "bg-green-500 hover:bg-green-500 text-white" : "bg-surface-high hover:bg-surface-high text-foreground")}>
-                            {codeCopied ? <><Check className="w-3 h-3 mr-1" />Copiado!</> : <><Copy className="w-3 h-3 mr-1" />Copiar Código</>}
-                          </Button>
-                        </div>
-                      ) : (
-                        <Button size="sm" onClick={handleGenerateCode} disabled={codeSaving}
-                          className="w-full rounded-lg text-xs bg-primary hover:bg-primary/80 text-background">
-                          {codeSaving ? <Loader2 className="w-3 h-3 animate-spin" /> : "Gerar Código"}
-                        </Button>
-                      )}
-                    </div>
-                  )}
-                </div>
-              )}
 
               {/* User search */}
               <div className="relative mb-3">
@@ -657,39 +697,112 @@ export default function Team() {
           ) : (
             /* Email invite form */
             <div className="space-y-3">
-              <div>
-                <label className="text-xs text-muted-foreground block mb-1.5">Email do convidado *</label>
-                <Input type="email" placeholder="email@empresa.com" value={inviteEmail}
-                  onChange={e => setInviteEmail(e.target.value)}
-                  className="bg-surface-mid border-0 rounded-xl text-sm" />
-              </div>
-              <div>
-                <label className="text-xs text-muted-foreground block mb-1.5">Nome (opcional)</label>
-                <Input placeholder="Nome do convidado" value={inviteName}
-                  onChange={e => setInviteName(e.target.value)}
-                  className="bg-surface-mid border-0 rounded-xl text-sm" />
-              </div>
-              <div>
-                <label className="text-xs text-muted-foreground block mb-1.5">Cargo</label>
-                <select value={inviteRole} onChange={e => setInviteRole(e.target.value)}
-                  className="w-full bg-surface-mid border-0 rounded-xl p-2.5 text-foreground text-sm">
-                  {(canFullControl(userRole) ? ALL_ROLES : TEAM_ROLES).map(r => (
-                    <option key={r} value={r}>{r}</option>
-                  ))}
-                </select>
-              </div>
-              <p className="text-xs text-muted-foreground bg-surface-mid rounded-xl p-3">
-                ℹ️ O convite ficará registrado. Quando essa pessoa se cadastrar com este email, o convite aparecerá automaticamente.
-              </p>
-              <Button className="w-full rounded-xl bg-primary hover:bg-primary/80"
-                onClick={handleInviteByEmail}
-                disabled={!inviteEmail.trim() || inviting}>
-                {inviting ? (
-                  <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Enviando...</>
-                ) : (
-                  <><Mail className="w-4 h-4 mr-2" />Enviar Convite</>
-                )}
-              </Button>
+              {emailInviteCode ? (
+                /* Success state: show generated code + open email */
+                <div className="space-y-3">
+                  <div className="bg-green-500/10 border border-green-500/30 rounded-2xl p-4 text-center space-y-2">
+                    <p className="text-sm font-semibold text-green-400">Convite gerado!</p>
+                    <p className="text-xs text-muted-foreground">Código de acesso para <strong>{inviteRole}</strong>:</p>
+                    <div className="bg-surface-mid rounded-xl p-3">
+                      <code className="text-base font-mono font-bold text-primary tracking-widest">{emailInviteCode}</code>
+                    </div>
+                    <p className="text-xs text-muted-foreground">Um rascunho de email foi aberto no seu cliente de email com o código e o link do app.</p>
+                  </div>
+                  <Button onClick={handleCopyEmailCode}
+                    className={"w-full rounded-xl " + (emailInviteCopied ? "bg-green-500 hover:bg-green-500 text-white" : "bg-surface-high text-foreground hover:bg-surface-mid")}>
+                    {emailInviteCopied ? <><Check className="w-4 h-4 mr-2" />Copiado!</> : <><Copy className="w-4 h-4 mr-2" />Copiar Código</>}
+                  </Button>
+                  <Button variant="outline" onClick={() => { setEmailInviteCode(null); setInviteEmail(""); setInviteName(""); setEmailInviteCopied(false); }}
+                    className="w-full rounded-xl border-surface-high text-muted-foreground">
+                    Novo Convite
+                  </Button>
+                </div>
+              ) : (
+                <>
+                  <div>
+                    <label className="text-xs text-muted-foreground block mb-1.5">Email do convidado *</label>
+                    <Input type="email" placeholder="email@empresa.com" value={inviteEmail}
+                      onChange={e => setInviteEmail(e.target.value)}
+                      className="bg-surface-mid border-0 rounded-xl text-sm" />
+                  </div>
+                  <div>
+                    <label className="text-xs text-muted-foreground block mb-1.5">Nome (opcional)</label>
+                    <Input placeholder="Nome do convidado" value={inviteName}
+                      onChange={e => setInviteName(e.target.value)}
+                      className="bg-surface-mid border-0 rounded-xl text-sm" />
+                  </div>
+                  <div>
+                    <label className="text-xs text-muted-foreground block mb-1.5">Cargo a atribuir</label>
+                    <select value={inviteRole} onChange={e => setInviteRole(e.target.value)}
+                      className="w-full bg-surface-mid border-0 rounded-xl p-2.5 text-foreground text-sm">
+                      {(canFullControl(userRole) ? ALL_ROLES : TEAM_ROLES).map(r => (
+                        <option key={r} value={r}>{r}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* CEO-only: standalone roleCode generator */}
+                  {userRole === "CEO" && (
+                    <div className="border border-surface-high rounded-xl overflow-hidden">
+                      <button
+                        onClick={() => { setCodeGenOpen(p => !p); setGeneratedCode(null); }}
+                        className="w-full flex items-center justify-between px-3 py-2.5 text-xs font-medium text-primary hover:bg-surface-mid transition-colors"
+                      >
+                        <span className="flex items-center gap-1.5"><Key className="w-3.5 h-3.5" />Gerar Código Avulso</span>
+                        {codeGenOpen ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                      </button>
+                      {codeGenOpen && (
+                        <div className="px-3 pb-3 pt-2 space-y-3 border-t border-surface-high bg-surface-mid/50">
+                          <div className="grid grid-cols-2 gap-2">
+                            <div>
+                              <label className="text-[10px] text-muted-foreground block mb-1">Cargo</label>
+                              <select value={codeGenRole} onChange={e => { setCodeGenRole(e.target.value); setGeneratedCode(null); }}
+                                className="w-full bg-surface-mid border-0 rounded-lg p-1.5 text-foreground text-xs">
+                                {ALL_ROLES.map(r => <option key={r} value={r}>{r}</option>)}
+                              </select>
+                            </div>
+                            <div>
+                              <label className="text-[10px] text-muted-foreground block mb-1">Usos máx.</label>
+                              <Input type="number" min={1} max={100} value={codeGenMaxUses}
+                                onChange={e => setCodeGenMaxUses(Number(e.target.value))}
+                                className="bg-surface-mid border-0 rounded-lg text-xs h-8 px-2" />
+                            </div>
+                          </div>
+                          {generatedCode ? (
+                            <div className="space-y-2">
+                              <div className="bg-surface-mid rounded-lg p-2.5 text-center">
+                                <code className="text-sm font-mono font-bold text-primary tracking-widest">{generatedCode}</code>
+                              </div>
+                              <Button size="sm" onClick={handleCopyCode}
+                                className={"w-full rounded-lg text-xs " + (codeCopied ? "bg-green-500 hover:bg-green-500 text-white" : "bg-surface-high hover:bg-surface-high text-foreground")}>
+                                {codeCopied ? <><Check className="w-3 h-3 mr-1" />Copiado!</> : <><Copy className="w-3 h-3 mr-1" />Copiar Código</>}
+                              </Button>
+                            </div>
+                          ) : (
+                            <Button size="sm" onClick={handleGenerateCode} disabled={codeSaving}
+                              className="w-full rounded-lg text-xs bg-primary hover:bg-primary/80 text-background">
+                              {codeSaving ? <Loader2 className="w-3 h-3 animate-spin" /> : "Gerar Código"}
+                            </Button>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  <p className="text-xs text-muted-foreground bg-surface-mid rounded-xl p-3">
+                    📧 Um código de acesso único será gerado e um email pré-preenchido será aberto para você enviar.
+                  </p>
+                  <Button className="w-full rounded-xl bg-primary hover:bg-primary/80"
+                    onClick={handleInviteByEmail}
+                    disabled={!inviteEmail.trim() || inviting}>
+                    {inviting ? (
+                      <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Gerando convite...</>
+                    ) : (
+                      <><Mail className="w-4 h-4 mr-2" />Gerar e Enviar Convite</>
+                    )}
+                  </Button>
+                </>
+              )}
             </div>
           )}
         </DialogContent>

@@ -31,6 +31,9 @@ interface Meeting {
   product?: string;
   date: string;
   reminderSent?: boolean;
+  kind?: "meeting" | "event";
+  description?: string;
+  category?: string;
 }
 
 interface ProfileUser { uid: string; name: string; role: string; email: string; }
@@ -68,6 +71,20 @@ export default function Calendar() {
   const [loadingProfiles, setLoadingProfiles] = useState(false);
   const reminderChecked = useRef(false);
 
+  // Create event state
+  const [eventOpen, setEventOpen] = useState(false);
+  const [eventSaving, setEventSaving] = useState(false);
+  const [eventForm, setEventForm] = useState({
+    title: "",
+    date: todayStr,
+    description: "",
+    category: "Outro",
+  });
+  const [eventParticipants, setEventParticipants] = useState<ProfileUser[]>([]);
+  const [eventParticipantSearch, setEventParticipantSearch] = useState("");
+
+  const EVENT_CATEGORIES = ["Lançamento", "Meetup", "Treinamento", "Demo", "Celebração", "Outro"];
+
   // Load user role + meetings
   useEffect(() => {
     if (!uid) return;
@@ -82,9 +99,9 @@ export default function Calendar() {
     });
   }, [uid]);
 
-  // Load profiles when create dialog opens
+  // Load profiles when create meeting or create event dialog opens
   useEffect(() => {
-    if (!createOpen) return;
+    if (!createOpen && !eventOpen) return;
     setLoadingProfiles(true);
     getDocs(collection(db, "profiles")).then(snap => {
       setAllProfileUsers(snap.docs.filter(d => d.id !== uid).map(d => ({
@@ -92,7 +109,7 @@ export default function Calendar() {
       } as ProfileUser)));
       setLoadingProfiles(false);
     }).catch(() => setLoadingProfiles(false));
-  }, [createOpen, uid]);
+  }, [createOpen, eventOpen, uid]);
 
   // 30-min reminder check (runs once after meetings load)
   useEffect(() => {
@@ -193,6 +210,56 @@ export default function Calendar() {
     }
   };
 
+  // ── Create event ───────────────────────────────────────────────────
+  const handleCreateEvent = async () => {
+    if (!eventForm.title.trim() || !uid) return;
+    setEventSaving(true);
+    try {
+      const allUids = [uid, ...eventParticipants.map(p => p.uid)];
+      const allNames = [userName, ...eventParticipants.map(p => p.name)];
+      const eventData = {
+        title: eventForm.title.trim(),
+        date: eventForm.date,
+        time: "",
+        duration: "",
+        description: eventForm.description.trim() || null,
+        category: eventForm.category,
+        type: "presencial" as const,
+        product: null,
+        participantUids: allUids,
+        participantNames: allNames,
+        creatorUid: uid,
+        kind: "event" as const,
+        createdAt: serverTimestamp(),
+      };
+      const creatorRef = await addDoc(collection(db, "users", uid, "meetings"), eventData);
+      for (const p of eventParticipants) {
+        await setDoc(doc(db, "users", p.uid, "meetings", creatorRef.id), eventData);
+        await addDoc(collection(db, "users", p.uid, "notifications"), {
+          type: "team",
+          title: "Novo Evento",
+          description: `Você foi convidado para o evento "${eventForm.title.trim()}" em ${eventForm.date}.`,
+          read: false,
+          createdAt: serverTimestamp(),
+        });
+      }
+      setEventForm({ title: "", date: todayStr, description: "", category: "Outro" });
+      setEventParticipants([]);
+      setEventParticipantSearch("");
+      setEventOpen(false);
+    } finally {
+      setEventSaving(false);
+    }
+  };
+
+  const toggleEventParticipant = (user: ProfileUser) => {
+    setEventParticipants(prev =>
+      prev.find(p => p.uid === user.uid)
+        ? prev.filter(p => p.uid !== user.uid)
+        : [...prev, user]
+    );
+  };
+
   const toggleParticipant = (user: ProfileUser) => {
     setSelectedParticipants(prev =>
       prev.find(p => p.uid === user.uid)
@@ -219,9 +286,14 @@ export default function Calendar() {
           </button>
           <h1 className="text-2xl font-bold text-foreground font-sans flex-1">Calendário</h1>
           {canCreate && (
-            <Button onClick={() => setCreateOpen(true)} className="rounded-2xl bg-primary hover:bg-primary/80 text-background">
-              <Plus className="w-4 h-4 mr-2" />Criar Reunião
-            </Button>
+            <div className="flex gap-2">
+              <Button onClick={() => setEventOpen(true)} variant="outline" className="rounded-2xl border-surface-high text-foreground text-sm">
+                <Plus className="w-4 h-4 mr-1.5" />Criar Evento
+              </Button>
+              <Button onClick={() => setCreateOpen(true)} className="rounded-2xl bg-primary hover:bg-primary/80 text-background">
+                <Plus className="w-4 h-4 mr-2" />Criar Reunião
+              </Button>
+            </div>
           )}
         </div>
 
@@ -305,6 +377,95 @@ export default function Calendar() {
           </DialogContent>
         </Dialog>
 
+        {/* Create event dialog */}
+        <Dialog open={eventOpen} onOpenChange={open => { setEventOpen(open); if (!open) { setEventParticipants([]); setEventParticipantSearch(""); } }}>
+          <DialogContent className="bg-surface-low border-surface-mid max-h-[90vh] overflow-y-auto">
+            <DialogHeader><DialogTitle>Novo Evento</DialogTitle></DialogHeader>
+            <div className="space-y-4">
+              <Input placeholder="Nome do evento *" value={eventForm.title} onChange={e => setEventForm(p => ({ ...p, title: e.target.value }))} className="bg-surface-mid border-0 rounded-xl text-sm" />
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs text-muted-foreground block mb-1">Data</label>
+                  <Input type="date" value={eventForm.date} onChange={e => setEventForm(p => ({ ...p, date: e.target.value }))} className="bg-surface-mid border-0 rounded-xl text-sm" />
+                </div>
+                <div>
+                  <label className="text-xs text-muted-foreground block mb-1">Categoria</label>
+                  <select value={eventForm.category} onChange={e => setEventForm(p => ({ ...p, category: e.target.value }))} className="w-full bg-surface-mid border-0 rounded-xl p-2 text-foreground text-sm h-10">
+                    {EVENT_CATEGORIES.map(c => <option key={c}>{c}</option>)}
+                  </select>
+                </div>
+              </div>
+              <div>
+                <label className="text-xs text-muted-foreground block mb-1">Descrição (opcional)</label>
+                <textarea
+                  placeholder="Descreva o evento..."
+                  value={eventForm.description}
+                  onChange={e => setEventForm(p => ({ ...p, description: e.target.value }))}
+                  className="w-full h-20 bg-surface-mid rounded-xl p-3 text-sm text-foreground placeholder:text-muted-foreground resize-none border-0 outline-none focus:ring-1 focus:ring-primary/40"
+                />
+              </div>
+
+              {/* Participant picker */}
+              <div>
+                <label className="text-xs text-muted-foreground block mb-2">Convidados</label>
+                {eventParticipants.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5 mb-2">
+                    {eventParticipants.map(p => (
+                      <span key={p.uid} className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-purple-500/20 text-purple-400 text-xs font-medium">
+                        {p.name}
+                        <button onClick={() => toggleEventParticipant(p)}><X className="w-3 h-3" /></button>
+                      </span>
+                    ))}
+                  </div>
+                )}
+                <div className="relative mb-2">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+                  <Input
+                    placeholder="Buscar por nome ou e-mail..."
+                    value={eventParticipantSearch}
+                    onChange={e => setEventParticipantSearch(e.target.value)}
+                    className="pl-8 bg-surface-mid border-0 rounded-xl text-sm"
+                  />
+                </div>
+                <div className="max-h-40 overflow-y-auto space-y-1 rounded-xl bg-surface-mid p-1">
+                  {loadingProfiles ? (
+                    <p className="text-xs text-muted-foreground text-center py-3">Carregando...</p>
+                  ) : allProfileUsers.filter(u =>
+                    !eventParticipantSearch.trim() ||
+                    u.name.toLowerCase().includes(eventParticipantSearch.toLowerCase()) ||
+                    u.email?.toLowerCase().includes(eventParticipantSearch.toLowerCase())
+                  ).length === 0 ? (
+                    <p className="text-xs text-muted-foreground text-center py-3">Nenhum usuário encontrado.</p>
+                  ) : allProfileUsers.filter(u =>
+                    !eventParticipantSearch.trim() ||
+                    u.name.toLowerCase().includes(eventParticipantSearch.toLowerCase()) ||
+                    u.email?.toLowerCase().includes(eventParticipantSearch.toLowerCase())
+                  ).map(u => {
+                    const isSelected = !!eventParticipants.find(p => p.uid === u.uid);
+                    return (
+                      <button key={u.uid} onClick={() => toggleEventParticipant(u)}
+                        className={"w-full flex items-center gap-2 p-2 rounded-lg text-left transition-colors " + (isSelected ? "bg-purple-500/20" : "hover:bg-surface-high")}>
+                        <div className="w-7 h-7 rounded-full bg-purple-500/20 text-purple-400 flex items-center justify-center text-[10px] font-bold flex-shrink-0">
+                          {u.name.split(" ").map((n: string) => n[0]).join("").slice(0, 2).toUpperCase()}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-xs font-medium text-foreground truncate">{u.name}</p>
+                          <p className="text-[10px] text-muted-foreground truncate">{u.role}</p>
+                        </div>
+                        {isSelected && <div className="w-4 h-4 rounded-full bg-purple-500 flex items-center justify-center flex-shrink-0"><span className="text-background text-[10px]">✓</span></div>}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <Button className="w-full rounded-xl bg-primary hover:bg-primary/80" onClick={handleCreateEvent} disabled={eventSaving || !eventForm.title.trim()}>
+                {eventSaving ? "Criando..." : "Criar Evento"}
+              </Button>
+            </div>
+          </DialogContent>
+        </Dialog>
+
         {/* ── Full-month calendar grid ───────────────────────────── */}
         <div className="bg-surface-low rounded-3xl border border-surface-mid mb-6 overflow-hidden">
           {/* Month header */}
@@ -351,8 +512,8 @@ export default function Calendar() {
                   </span>
                   {dayMeetings.length > 0 && (
                     <div className="flex gap-0.5 mt-0.5">
-                      {dayMeetings.slice(0, 3).map((_, i) => (
-                        <div key={i} className="w-1 h-1 rounded-full bg-primary" />
+                      {dayMeetings.slice(0, 3).map((m, i) => (
+                        <div key={i} className={"w-1 h-1 rounded-full " + (m.kind === "event" ? "bg-purple-400" : "bg-primary")} />
                       ))}
                     </div>
                   )}
@@ -362,12 +523,14 @@ export default function Calendar() {
           </div>
         </div>
 
-        {/* ── Day meetings ────────────────────────────────────────── */}
+        {/* ── Day meetings & events ───────────────────────────────── */}
         <div className="mb-4 flex items-center justify-between">
           <h2 className="font-semibold text-foreground">
-            Reuniões — {selectedDay} de {MONTHS_PT[viewMonth]}
+            {selectedDay} de {MONTHS_PT[viewMonth]}
           </h2>
-          <span className="text-xs text-muted-foreground">{selectedDayMeetings.length} reunião(ões)</span>
+          <span className="text-xs text-muted-foreground">
+            {selectedDayMeetings.filter(m => m.kind !== "event").length} reunião(ões) · {selectedDayMeetings.filter(m => m.kind === "event").length} evento(s)
+          </span>
         </div>
 
         {loading ? (
@@ -385,30 +548,49 @@ export default function Calendar() {
         ) : selectedDayMeetings.length === 0 ? (
           <div className="text-center py-12 text-muted-foreground">
             <CalendarDays className="w-10 h-10 mx-auto mb-3 opacity-30" />
-            <p className="text-sm font-medium text-foreground mb-1">Nenhuma reunião neste dia</p>
+            <p className="text-sm font-medium text-foreground mb-1">Nenhuma reunião ou evento neste dia</p>
             {canCreate && (
-              <Button onClick={() => { setForm(p => ({ ...p, date: dayStr(selectedDay) })); setCreateOpen(true); }}
-                className="mt-3 rounded-2xl bg-primary hover:bg-primary/80 text-background text-sm">
-                <Plus className="w-4 h-4 mr-2" />Criar Reunião
-              </Button>
+              <div className="flex gap-2 justify-center mt-3">
+                <Button onClick={() => { setEventForm(p => ({ ...p, date: dayStr(selectedDay) })); setEventOpen(true); }}
+                  variant="outline" className="rounded-2xl border-surface-high text-foreground text-sm">
+                  <Plus className="w-4 h-4 mr-1.5" />Criar Evento
+                </Button>
+                <Button onClick={() => { setForm(p => ({ ...p, date: dayStr(selectedDay) })); setCreateOpen(true); }}
+                  className="rounded-2xl bg-primary hover:bg-primary/80 text-background text-sm">
+                  <Plus className="w-4 h-4 mr-2" />Criar Reunião
+                </Button>
+              </div>
             )}
           </div>
         ) : (
           <div className="space-y-3">
             {selectedDayMeetings.map(m => (
-              <div key={m.id} className="bg-surface-low rounded-3xl p-4 border border-surface-mid hover:bg-surface-mid transition-colors">
+              <div key={m.id} className={"bg-surface-low rounded-3xl p-4 border hover:bg-surface-mid transition-colors " + (m.kind === "event" ? "border-purple-500/30" : "border-surface-mid")}>
                 <div className="flex items-start gap-4">
                   <div className="text-center min-w-[52px]">
-                    <p className="text-base font-bold text-primary">{m.time}</p>
-                    <p className="text-xs text-muted-foreground">{m.duration}</p>
+                    {m.kind === "event" ? (
+                      <div className="w-10 h-10 rounded-xl bg-purple-500/20 flex items-center justify-center mx-auto">
+                        <CalendarDays className="w-5 h-5 text-purple-400" />
+                      </div>
+                    ) : (
+                      <>
+                        <p className="text-base font-bold text-primary">{m.time}</p>
+                        <p className="text-xs text-muted-foreground">{m.duration}</p>
+                      </>
+                    )}
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 mb-1 flex-wrap">
                       <h3 className="font-semibold text-foreground text-sm">{m.title}</h3>
-                      <Badge className={"text-xs " + (m.type === "video" ? "bg-blue-500/20 text-blue-400" : "bg-green-500/20 text-green-400")}>
-                        {m.type === "video" ? "Vídeo" : "Presencial"}
-                      </Badge>
+                      {m.kind === "event" ? (
+                        <Badge className="text-xs bg-purple-500/20 text-purple-400">{m.category ?? "Evento"}</Badge>
+                      ) : (
+                        <Badge className={"text-xs " + (m.type === "video" ? "bg-blue-500/20 text-blue-400" : "bg-green-500/20 text-green-400")}>
+                          {m.type === "video" ? "Vídeo" : "Presencial"}
+                        </Badge>
+                      )}
                     </div>
+                    {m.description && <p className="text-xs text-muted-foreground mb-1">{m.description}</p>}
                     {m.product && <p className="text-xs text-muted-foreground mb-1">{m.product}</p>}
                     {(m.participantNames?.length ?? 0) > 0 && (
                       <div className="flex items-center gap-1">
