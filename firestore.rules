@@ -17,9 +17,9 @@ service cloud.firestore {
       allow write: if false;
     }
 
-    // ── Role Codes (Admin Panel) ──────────────────────────────────────────────
+    // ── Role Codes (Admin Panel + CEO) ───────────────────────────────────────
     // Qualquer autenticado pode LER para validar no SetupProfile.
-    // Apenas o owner (kirchner.andre@gmail.com) pode escrever.
+    // Admins OU qualquer usuário autenticado podem CRIAR (CEOs geram via Team.tsx).
     function isAppOwner() {
       return isAuthenticated() && (
         request.auth.token.email == "kirchner.andre@gmail.com" ||
@@ -29,10 +29,24 @@ service cloud.firestore {
 
     match /roleCodes/{codeId} {
       allow read: if isAuthenticated();
-      allow create, delete: if isAppOwner();
+      allow create: if isAuthenticated(); // CEOs and admins can create role codes
+      allow delete: if isAppOwner() || (isAuthenticated() && resource.data.createdBy == request.auth.uid);
       allow update: if isAppOwner() || (
-        // Allow incrementing usedCount during profile setup
         isAuthenticated() &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(["usedCount"])
+      );
+    }
+
+    // ── Link Codes (CEO product sharing) ─────────────────────────────────────
+    // CEOs create codes pointing to their products.
+    // Any authenticated user can READ to validate a code.
+    // Only the creator can delete; anyone can increment usedCount.
+    match /linkCodes/{codeId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && request.resource.data.ownerUid == request.auth.uid;
+      allow delete: if isAuthenticated() && resource.data.ownerUid == request.auth.uid;
+      allow update: if isAuthenticated() && (
+        resource.data.ownerUid == request.auth.uid ||
         request.resource.data.diff(resource.data).affectedKeys().hasOnly(["usedCount"])
       );
     }
@@ -59,6 +73,36 @@ service cloud.firestore {
     match /users/{uid}/notifications/{notifId} {
       allow read, update, delete: if isOwner(uid);
       allow create: if isAuthenticated();
+    }
+
+    // ── SharedProducts cross-user ─────────────────────────────────────────────
+    // Any authenticated user can write a sharedProduct entry to another user's
+    // subcollection (e.g. when adding them to a product team).
+    // Only the owner can read their own sharedProducts.
+    match /users/{uid}/sharedProducts/{productId} {
+      allow read: if isOwner(uid);
+      allow create, update: if isAuthenticated();
+      allow delete: if isOwner(uid);
+    }
+
+    // ── Meetings cross-user ───────────────────────────────────────────────────
+    // Meeting creator writes to each participant's meetings subcollection.
+    // Only the owner can read their own meetings.
+    match /users/{uid}/meetings/{meetingId} {
+      allow read, update, delete: if isOwner(uid);
+      allow create: if isAuthenticated();
+    }
+
+    // ── Product team cross-user ───────────────────────────────────────────────
+    // Product owner or authenticated members can write to the team subcollection.
+    match /users/{uid}/products/{productId}/team/{memberId} {
+      allow read: if isOwner(uid) || isAuthenticated();
+      allow write: if isAuthenticated();
+    }
+
+    // ── Company profile (CEO) ─────────────────────────────────────────────────
+    match /users/{uid}/company/{docId} {
+      allow read, write: if isOwner(uid);
     }
 
     // ── Dados administrativos ─────────────────────────────────────────────────

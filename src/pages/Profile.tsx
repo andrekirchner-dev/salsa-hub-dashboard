@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { ArrowLeft, User, Mail, Phone, Save, LogOut, Bell, Moon, Globe, Lock, ChevronRight, Shield, Camera, Package, ArchiveRestore, Trash2, ChevronDown } from "lucide-react";
+import { ArrowLeft, User, Mail, Phone, Save, LogOut, Bell, Moon, Globe, Lock, ChevronRight, Shield, Camera, Package, ArchiveRestore, Trash2, ChevronDown, Building, Hash, MapPin, Link2, Copy, Check, Key, Plus, X, Loader2 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -7,7 +7,7 @@ import { Progress } from "@/components/ui/progress";
 import { useNavigate } from "react-router-dom";
 import { auth, db, storage } from "@/integrations/firebase/client";
 import { signOut, updateProfile } from "firebase/auth";
-import { doc, getDoc, updateDoc, deleteDoc, collection, query, where, onSnapshot, orderBy } from "firebase/firestore";
+import { doc, getDoc, updateDoc, deleteDoc, setDoc, addDoc, getDocs, collection, query, where, onSnapshot, orderBy, serverTimestamp } from "firebase/firestore";
 import { ref, uploadBytesResumable, getDownloadURL } from "firebase/storage";
 import { useToast } from "@/hooks/use-toast";
 
@@ -40,6 +40,25 @@ export default function Profile() {
     darkMode: true,
     twoFactor: false,
   });
+
+  // CEO company data
+  const [companyName, setCompanyName] = useState("");
+  const [companyCNPJ, setCompanyCNPJ] = useState("");
+  const [companyCategory, setCompanyCategory] = useState("");
+  const [companySite, setCompanySite] = useState("");
+  const [companyPhone2, setCompanyPhone2] = useState("");
+  const [companyAddress, setCompanyAddress] = useState("");
+  const [companySaving, setCompanySaving] = useState(false);
+
+  // CEO linkCode generator
+  interface OwnedProduct { id: string; name: string; }
+  const [ownedProducts, setOwnedProducts] = useState<OwnedProduct[]>([]);
+  const [linkCodeDialogOpen, setLinkCodeDialogOpen] = useState(false);
+  const [linkCodeProduct, setLinkCodeProduct] = useState("");
+  const [linkCodeMaxUses, setLinkCodeMaxUses] = useState(1);
+  const [generatedLinkCode, setGeneratedLinkCode] = useState<string | null>(null);
+  const [linkCodeSaving, setLinkCodeSaving] = useState(false);
+  const [linkCodeCopied, setLinkCodeCopied] = useState(false);
 
   // Archived products
   interface ArchivedProduct { id: string; name: string; type: string; status: string; }
@@ -76,11 +95,34 @@ export default function Profile() {
     getDoc(doc(db, "profiles", uid)).then(snap => {
       if (snap.exists()) {
         const d = snap.data();
+        const loadedRole = d.role ?? "";
         setName(d.name ?? currentUser?.displayName ?? "");
         setPhone(d.phone ?? "");
-        setRole(d.role ?? "");
+        setRole(loadedRole);
         setCompany(d.company ?? "");
         if (d.avatarUrl) setAvatarUrl(d.avatarUrl);
+
+        // CEO: load company doc + owned products
+        if (loadedRole === "CEO") {
+          getDoc(doc(db, "users", uid, "company", "profile")).then(cSnap => {
+            if (cSnap.exists()) {
+              const c = cSnap.data();
+              setCompanyName(c.name ?? "");
+              setCompanyCNPJ(c.cnpj ?? "");
+              setCompanyCategory(c.category ?? "");
+              setCompanySite(c.site ?? "");
+              setCompanyPhone2(c.phone ?? "");
+              setCompanyAddress(c.address ?? "");
+            }
+          });
+          getDocs(query(collection(db, "users", uid, "products"), where("archived", "==", false))).then(snap => {
+            setOwnedProducts(snap.docs.map(d => ({ id: d.id, name: d.data().name ?? d.id })));
+          }).catch(() => {
+            getDocs(collection(db, "users", uid, "products")).then(snap => {
+              setOwnedProducts(snap.docs.filter(d => !d.data().archived).map(d => ({ id: d.id, name: d.data().name ?? d.id })));
+            });
+          });
+        }
       }
     });
   }, [uid]);
@@ -135,6 +177,49 @@ export default function Profile() {
         if (avatarInputRef.current) avatarInputRef.current.value = "";
       },
     );
+  };
+
+  const handleSaveCompany = async () => {
+    if (!uid) return;
+    setCompanySaving(true);
+    await setDoc(doc(db, "users", uid, "company", "profile"), {
+      name: companyName.trim(),
+      cnpj: companyCNPJ.trim(),
+      category: companyCategory.trim(),
+      site: companySite.trim(),
+      phone: companyPhone2.trim(),
+      address: companyAddress.trim(),
+      updatedAt: serverTimestamp(),
+    });
+    setCompanySaving(false);
+    toast({ title: "Empresa atualizada!", description: "Perfil da empresa salvo." });
+  };
+
+  const handleGenerateLinkCode = async () => {
+    if (!linkCodeProduct || linkCodeSaving) return;
+    setLinkCodeSaving(true);
+    const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+    let suffix = "";
+    for (let i = 0; i < 8; i++) suffix += chars[Math.floor(Math.random() * chars.length)];
+    const code = `LINK-${suffix}`;
+    await addDoc(collection(db, "linkCodes"), {
+      code,
+      productId: linkCodeProduct,
+      ownerUid: uid,
+      maxUses: linkCodeMaxUses,
+      usedCount: 0,
+      active: true,
+      createdAt: serverTimestamp(),
+    });
+    setGeneratedLinkCode(code);
+    setLinkCodeSaving(false);
+  };
+
+  const handleCopyLinkCode = () => {
+    if (!generatedLinkCode) return;
+    navigator.clipboard.writeText(generatedLinkCode).catch(() => {});
+    setLinkCodeCopied(true);
+    setTimeout(() => setLinkCodeCopied(false), 2000);
   };
 
   const handleLogout = async () => {
@@ -241,6 +326,120 @@ export default function Profile() {
             {saving ? "Salvando..." : "Salvar Alterações"}
           </Button>
         </div>
+
+        {/* CEO: Perfil da Empresa */}
+        {role === "CEO" && (
+          <div className="bg-surface-low rounded-3xl p-6 border border-surface-mid mb-4">
+            <div className="flex items-center justify-between mb-5">
+              <div className="flex items-center gap-2">
+                <Building className="w-5 h-5 text-primary" />
+                <h3 className="font-bold text-foreground">Perfil da Empresa</h3>
+              </div>
+              <button
+                onClick={() => { setLinkCodeDialogOpen(p => !p); setGeneratedLinkCode(null); }}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-primary/10 hover:bg-primary/20 text-primary text-xs font-medium transition-colors"
+              >
+                <Key className="w-3.5 h-3.5" />Novo Código
+              </button>
+            </div>
+
+            {/* LinkCode generator panel */}
+            {linkCodeDialogOpen && (
+              <div className="mb-5 p-4 rounded-2xl border border-surface-high bg-surface-mid/50 space-y-3">
+                <p className="text-xs font-semibold text-foreground flex items-center gap-1.5">
+                  <Link2 className="w-3.5 h-3.5 text-primary" />Gerar Código de Vinculação
+                </p>
+                <div>
+                  <label className="text-xs text-muted-foreground block mb-1">Produto</label>
+                  <select value={linkCodeProduct} onChange={e => { setLinkCodeProduct(e.target.value); setGeneratedLinkCode(null); }}
+                    className="w-full bg-surface-mid border-0 rounded-xl p-2 text-foreground text-sm">
+                    <option value="">Selecionar produto...</option>
+                    {ownedProducts.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-xs text-muted-foreground block mb-1">Usos máximos</label>
+                  <input type="number" min={1} max={50} value={linkCodeMaxUses}
+                    onChange={e => setLinkCodeMaxUses(Number(e.target.value))}
+                    className="w-full bg-surface-mid rounded-xl p-2 text-foreground text-sm border-0 outline-none focus:ring-1 focus:ring-primary/40" />
+                </div>
+                {generatedLinkCode ? (
+                  <div className="space-y-2">
+                    <div className="bg-surface-mid rounded-xl p-3 text-center border border-primary/30">
+                      <code className="text-base font-mono font-bold text-primary tracking-widest">{generatedLinkCode}</code>
+                    </div>
+                    <button onClick={handleCopyLinkCode}
+                      className={"w-full flex items-center justify-center gap-2 py-2 rounded-xl text-xs font-medium transition-colors " +
+                        (linkCodeCopied ? "bg-green-500/20 text-green-400" : "bg-surface-high hover:bg-surface-mid text-foreground")}>
+                      {linkCodeCopied ? <><Check className="w-3.5 h-3.5" />Copiado!</> : <><Copy className="w-3.5 h-3.5" />Copiar Código</>}
+                    </button>
+                    <button onClick={() => { setGeneratedLinkCode(null); setLinkCodeProduct(""); }}
+                      className="w-full flex items-center justify-center gap-1.5 py-1.5 text-xs text-muted-foreground hover:text-foreground">
+                      <Plus className="w-3 h-3" />Gerar outro
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    onClick={handleGenerateLinkCode}
+                    disabled={!linkCodeProduct || linkCodeSaving}
+                    className="w-full py-2 rounded-xl bg-primary hover:bg-primary/80 text-background text-sm font-medium disabled:opacity-50 transition-colors flex items-center justify-center gap-2"
+                  >
+                    {linkCodeSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : "Gerar Código"}
+                  </button>
+                )}
+              </div>
+            )}
+
+            <div className="space-y-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="text-xs text-muted-foreground block mb-1.5 flex items-center gap-1.5">
+                    <Building className="w-3.5 h-3.5" /> Nome da Empresa
+                  </label>
+                  <input value={companyName} onChange={e => setCompanyName(e.target.value)}
+                    placeholder="Ex: SalsaHub Ltda." className="w-full bg-surface-mid border-0 rounded-2xl px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground outline-none focus:ring-1 focus:ring-primary/40" />
+                </div>
+                <div>
+                  <label className="text-xs text-muted-foreground block mb-1.5 flex items-center gap-1.5">
+                    <Hash className="w-3.5 h-3.5" /> CNPJ
+                  </label>
+                  <input value={companyCNPJ} onChange={e => setCompanyCNPJ(e.target.value)}
+                    placeholder="00.000.000/0000-00" className="w-full bg-surface-mid border-0 rounded-2xl px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground outline-none focus:ring-1 focus:ring-primary/40" />
+                </div>
+                <div>
+                  <label className="text-xs text-muted-foreground block mb-1.5">Categoria</label>
+                  <input value={companyCategory} onChange={e => setCompanyCategory(e.target.value)}
+                    placeholder="Ex: SaaS, E-commerce, Educação..." className="w-full bg-surface-mid border-0 rounded-2xl px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground outline-none focus:ring-1 focus:ring-primary/40" />
+                </div>
+                <div>
+                  <label className="text-xs text-muted-foreground block mb-1.5 flex items-center gap-1.5">
+                    <Globe className="w-3.5 h-3.5" /> Site
+                  </label>
+                  <input value={companySite} onChange={e => setCompanySite(e.target.value)}
+                    placeholder="https://suaempresa.com.br" className="w-full bg-surface-mid border-0 rounded-2xl px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground outline-none focus:ring-1 focus:ring-primary/40" />
+                </div>
+                <div>
+                  <label className="text-xs text-muted-foreground block mb-1.5 flex items-center gap-1.5">
+                    <Phone className="w-3.5 h-3.5" /> Telefone Comercial
+                  </label>
+                  <input value={companyPhone2} onChange={e => setCompanyPhone2(e.target.value)}
+                    placeholder="+55 11 3000-0000" className="w-full bg-surface-mid border-0 rounded-2xl px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground outline-none focus:ring-1 focus:ring-primary/40" />
+                </div>
+                <div>
+                  <label className="text-xs text-muted-foreground block mb-1.5 flex items-center gap-1.5">
+                    <MapPin className="w-3.5 h-3.5" /> Endereço
+                  </label>
+                  <input value={companyAddress} onChange={e => setCompanyAddress(e.target.value)}
+                    placeholder="Rua, Cidade, Estado" className="w-full bg-surface-mid border-0 rounded-2xl px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground outline-none focus:ring-1 focus:ring-primary/40" />
+                </div>
+              </div>
+              <Button onClick={handleSaveCompany} disabled={companySaving} className="w-full rounded-2xl bg-primary hover:bg-primary/80 text-background">
+                <Save className="w-4 h-4 mr-2" />
+                {companySaving ? "Salvando..." : "Salvar Empresa"}
+              </Button>
+            </div>
+          </div>
+        )}
 
         {settingsSections.map(section => (
           <div key={section.title} className="bg-surface-low rounded-3xl border border-surface-mid mb-4 overflow-hidden">

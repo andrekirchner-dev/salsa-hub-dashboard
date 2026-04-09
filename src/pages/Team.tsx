@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { ArrowLeft, Plus, Trash2, Info, Search, Mail, UserPlus, Loader2, Check } from "lucide-react";
+import { ArrowLeft, Plus, Trash2, Info, Search, Mail, UserPlus, Loader2, Check, Key, Copy, ChevronDown, ChevronUp } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -12,6 +12,14 @@ import {
   collection, onSnapshot, addDoc, deleteDoc, doc, query,
   orderBy, serverTimestamp, getDoc, getDocs,
 } from "firebase/firestore";
+
+function generateRoleCode(role: string): string {
+  const prefix = role.slice(0, 3).toUpperCase();
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  let suffix = "";
+  for (let i = 0; i < 6; i++) suffix += chars[Math.floor(Math.random() * chars.length)];
+  return `${prefix}-${suffix}`;
+}
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -74,6 +82,14 @@ export default function Team() {
   const [inviteRole, setInviteRole] = useState("Analista");
   const [inviting, setInviting] = useState(false);
   const [invitedUids, setInvitedUids] = useState<Set<string>>(new Set());
+
+  // CEO RoleCode generator
+  const [codeGenOpen, setCodeGenOpen] = useState(false);
+  const [codeGenRole, setCodeGenRole] = useState("Analista");
+  const [codeGenMaxUses, setCodeGenMaxUses] = useState(1);
+  const [generatedCode, setGeneratedCode] = useState<string | null>(null);
+  const [codeSaving, setCodeSaving] = useState(false);
+  const [codeCopied, setCodeCopied] = useState(false);
 
   const selectedTeam = teams.find(t => t.id === selectedTeamId);
 
@@ -230,10 +246,37 @@ export default function Team() {
     setInviteOpen(false);
   };
 
-  const filteredUsers = registeredUsers.filter(u =>
-    u.name?.toLowerCase().includes(inviteSearch.toLowerCase()) ||
-    u.email?.toLowerCase().includes(inviteSearch.toLowerCase())
-  );
+  // Only show users when search has text
+  const filteredUsers = inviteSearch.trim()
+    ? registeredUsers.filter(u =>
+        u.name?.toLowerCase().includes(inviteSearch.toLowerCase()) ||
+        u.email?.toLowerCase().includes(inviteSearch.toLowerCase())
+      )
+    : [];
+
+  const handleGenerateCode = async () => {
+    if (codeSaving) return;
+    setCodeSaving(true);
+    const code = generateRoleCode(codeGenRole);
+    await addDoc(collection(db, "roleCodes"), {
+      code,
+      role: codeGenRole,
+      maxUses: codeGenMaxUses,
+      usedCount: 0,
+      active: true,
+      createdAt: serverTimestamp(),
+      createdBy: uid,
+    });
+    setGeneratedCode(code);
+    setCodeSaving(false);
+  };
+
+  const handleCopyCode = () => {
+    if (!generatedCode) return;
+    navigator.clipboard.writeText(generatedCode).catch(() => {});
+    setCodeCopied(true);
+    setTimeout(() => setCodeCopied(false), 2000);
+  };
 
   // ── Render ────────────────────────────────────────────────────────────────
   return (
@@ -328,16 +371,14 @@ export default function Team() {
 
                 <div className="p-4 md:p-6">
                   <Tabs defaultValue="members" className="w-full">
-                    <TabsList asChild>
-                      <div className="grid grid-cols-3 gap-2 mb-5">
-                        {tabItems.map(tab => (
-                          <TabsTrigger key={tab.value} value={tab.value}
-                            className="flex flex-col items-center gap-0.5 py-2.5 bg-surface-mid border border-surface-mid rounded-2xl text-[11px] font-medium text-muted-foreground data-[state=active]:bg-primary data-[state=active]:text-background data-[state=active]:border-primary transition-all">
-                            <span className="text-sm">{tab.emoji}</span>
-                            <span>{tab.label}</span>
-                          </TabsTrigger>
-                        ))}
-                      </div>
+                    <TabsList className="grid grid-cols-3 gap-2 mb-5 bg-transparent h-auto p-0 rounded-none w-full">
+                      {tabItems.map(tab => (
+                        <TabsTrigger key={tab.value} value={tab.value}
+                          className="flex flex-col items-center gap-0.5 py-2.5 bg-surface-mid border border-surface-mid rounded-2xl text-[11px] font-medium text-muted-foreground data-[state=active]:bg-primary data-[state=active]:text-background data-[state=active]:border-primary transition-all">
+                          <span className="text-sm">{tab.emoji}</span>
+                          <span>{tab.label}</span>
+                        </TabsTrigger>
+                      ))}
                     </TabsList>
 
                     {/* ── Members tab ───────────────────────────────────────── */}
@@ -513,6 +554,54 @@ export default function Team() {
                 </select>
               </div>
 
+              {/* CEO-only: RoleCode generator */}
+              {userRole === "CEO" && (
+                <div className="mb-3 border border-surface-high rounded-xl overflow-hidden">
+                  <button
+                    onClick={() => { setCodeGenOpen(p => !p); setGeneratedCode(null); }}
+                    className="w-full flex items-center justify-between px-3 py-2.5 text-xs font-medium text-primary hover:bg-surface-mid transition-colors"
+                  >
+                    <span className="flex items-center gap-1.5"><Key className="w-3.5 h-3.5" />Gerar Código de Acesso</span>
+                    {codeGenOpen ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                  </button>
+                  {codeGenOpen && (
+                    <div className="px-3 pb-3 pt-2 space-y-3 border-t border-surface-high bg-surface-mid/50">
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <label className="text-[10px] text-muted-foreground block mb-1">Cargo</label>
+                          <select value={codeGenRole} onChange={e => { setCodeGenRole(e.target.value); setGeneratedCode(null); }}
+                            className="w-full bg-surface-mid border-0 rounded-lg p-1.5 text-foreground text-xs">
+                            {ALL_ROLES.map(r => <option key={r} value={r}>{r}</option>)}
+                          </select>
+                        </div>
+                        <div>
+                          <label className="text-[10px] text-muted-foreground block mb-1">Usos máx.</label>
+                          <Input type="number" min={1} max={100} value={codeGenMaxUses}
+                            onChange={e => setCodeGenMaxUses(Number(e.target.value))}
+                            className="bg-surface-mid border-0 rounded-lg text-xs h-8 px-2" />
+                        </div>
+                      </div>
+                      {generatedCode ? (
+                        <div className="space-y-2">
+                          <div className="bg-surface-mid rounded-lg p-2.5 text-center">
+                            <code className="text-sm font-mono font-bold text-primary tracking-widest">{generatedCode}</code>
+                          </div>
+                          <Button size="sm" onClick={handleCopyCode}
+                            className={"w-full rounded-lg text-xs " + (codeCopied ? "bg-green-500 hover:bg-green-500 text-white" : "bg-surface-high hover:bg-surface-high text-foreground")}>
+                            {codeCopied ? <><Check className="w-3 h-3 mr-1" />Copiado!</> : <><Copy className="w-3 h-3 mr-1" />Copiar Código</>}
+                          </Button>
+                        </div>
+                      ) : (
+                        <Button size="sm" onClick={handleGenerateCode} disabled={codeSaving}
+                          className="w-full rounded-lg text-xs bg-primary hover:bg-primary/80 text-background">
+                          {codeSaving ? <Loader2 className="w-3 h-3 animate-spin" /> : "Gerar Código"}
+                        </Button>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+
               {/* User search */}
               <div className="relative mb-3">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
@@ -527,11 +616,14 @@ export default function Team() {
                     <Loader2 className="w-4 h-4 animate-spin" />
                     <span className="text-sm">Buscando usuários...</span>
                   </div>
+                ) : !inviteSearch.trim() ? (
+                  <div className="text-center py-6 text-muted-foreground">
+                    <Search className="w-8 h-8 mx-auto mb-2 opacity-30" />
+                    <p className="text-sm">Digite um nome ou email para buscar.</p>
+                  </div>
                 ) : filteredUsers.length === 0 ? (
                   <div className="text-center py-8 text-muted-foreground">
-                    <p className="text-sm">
-                      {inviteSearch ? "Nenhum usuário encontrado." : "Todos os usuários registrados já estão na equipe."}
-                    </p>
+                    <p className="text-sm">Nenhum usuário encontrado.</p>
                     <button onClick={() => setInviteTab("email")} className="text-xs text-primary mt-2 hover:underline">
                       Convidar por email →
                     </button>

@@ -1,17 +1,18 @@
 import { useState, useEffect } from "react";
-import { Package, Plus, Search, ArrowLeft } from "lucide-react";
+import { Package, Plus, Search, Link2, Loader2 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Progress } from "@/components/ui/progress";
-import { Link, useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { auth, db } from "@/integrations/firebase/client";
 import {
-  collection, onSnapshot, addDoc, serverTimestamp, query, orderBy,
+  collection, onSnapshot, addDoc, setDoc, updateDoc, getDoc, getDocs,
+  serverTimestamp, query, orderBy, where, doc,
 } from "firebase/firestore";
 
 // shared product reference stored when another user adds you to their product
@@ -41,10 +42,12 @@ const getStatusColor = (status: string) => {
 export default function Products() {
   const navigate = useNavigate();
   const uid = auth.currentUser?.uid ?? "";
+  const userName = auth.currentUser?.displayName ?? "Usuário";
 
   const [products, setProducts] = useState<Product[]>([]);
   const [sharedProducts, setSharedProducts] = useState<SharedProduct[]>([]);
   const [loading, setLoading] = useState(true);
+  const [userRole, setUserRole] = useState("");
   const [search, setSearch] = useState("");
   const [typeFilter, setTypeFilter] = useState("Todos");
   const [statusFilter, setStatusFilter] = useState("Todos");
@@ -55,8 +58,17 @@ export default function Products() {
   const [newStatus, setNewStatus] = useState("");
   const [saving, setSaving] = useState(false);
 
+  // CEO: Vincular Produto
+  const [vincularOpen, setVincularOpen] = useState(false);
+  const [linkCodeInput, setLinkCodeInput] = useState("");
+  const [vincularLoading, setVincularLoading] = useState(false);
+  const [vincularError, setVincularError] = useState("");
+
   useEffect(() => {
     if (!uid) return;
+    getDoc(doc(db, "profiles", uid)).then(snap => {
+      if (snap.exists()) setUserRole(snap.data()?.role ?? "");
+    });
     const q = query(collection(db, "users", uid, "products"), orderBy("createdAt", "desc"));
     const unsub = onSnapshot(q, (snap) => {
       setProducts(snap.docs.map(d => ({ id: d.id, ...d.data() } as Product)));
@@ -84,6 +96,57 @@ export default function Products() {
   const filtered = products.filter(filterFn);
   const filteredShared = sharedProducts.filter(filterFn);
 
+  const handleVincular = async () => {
+    const code = linkCodeInput.trim().toUpperCase();
+    if (!code || vincularLoading) return;
+    setVincularLoading(true);
+    setVincularError("");
+    try {
+      // Look up the linkCode
+      const codesSnap = await getDocs(query(collection(db, "linkCodes"), where("code", "==", code), where("active", "==", true)));
+      if (codesSnap.empty) { setVincularError("Código não encontrado ou inativo."); return; }
+      const codeDoc = codesSnap.docs[0];
+      const codeData = codeDoc.data();
+      if (codeData.usedCount >= codeData.maxUses) { setVincularError("Este código atingiu o limite de usos."); return; }
+      if (codeData.ownerUid === uid) { setVincularError("Você não pode vincular seu próprio produto."); return; }
+
+      // Fetch the referenced product from the original owner
+      const productSnap = await getDoc(doc(db, "users", codeData.ownerUid, "products", codeData.productId));
+      if (!productSnap.exists()) { setVincularError("Produto referenciado não encontrado."); return; }
+      const productData = productSnap.data();
+
+      // Copy to CEO's products collection with isLinked flag
+      await setDoc(doc(db, "users", uid, "products", codeData.productId), {
+        ...productData,
+        isLinked: true,
+        linkedFromUid: codeData.ownerUid,
+        linkedCode: code,
+        linkedAt: serverTimestamp(),
+        progress: productData.progress ?? 0,
+        createdAt: productData.createdAt ?? serverTimestamp(),
+      });
+
+      // Increment usedCount on the linkCode
+      await updateDoc(doc(db, "linkCodes", codeDoc.id), { usedCount: (codeData.usedCount ?? 0) + 1 });
+
+      // Notify original product creator
+      await addDoc(collection(db, "users", codeData.ownerUid, "notifications"), {
+        type: "product",
+        title: "Produto vinculado!",
+        description: `${userName} vinculou "${productData.name}" usando seu código de acesso.`,
+        read: false,
+        createdAt: serverTimestamp(),
+      });
+
+      setLinkCodeInput("");
+      setVincularOpen(false);
+    } catch (e) {
+      setVincularError("Erro ao vincular produto. Tente novamente.");
+    } finally {
+      setVincularLoading(false);
+    }
+  };
+
   const handleAdd = async () => {
     if (!newName.trim() || !newType || !newStatus) return;
     setSaving(true);
@@ -105,15 +168,22 @@ export default function Products() {
     <div className="min-h-screen bg-background">
       <div className="p-4 md:p-8 max-w-5xl mx-auto">
         {/* Header */}
-        <div className="flex items-center justify-between mb-6">
+        <div className="flex items-center justify-between mb-6 gap-2 flex-wrap">
           <h1 className="text-2xl font-bold text-foreground font-sans">Produtos</h1>
-          <Dialog open={addOpen} onOpenChange={setAddOpen}>
-            <DialogTrigger asChild>
-              <Button className="rounded-2xl bg-primary hover:bg-primary/80 text-background">
-                <Plus className="w-4 h-4 mr-2" />
-                Novo Produto
+          <div className="flex gap-2">
+            {userRole === "CEO" && (
+              <Button onClick={() => { setVincularOpen(true); setVincularError(""); setLinkCodeInput(""); }}
+                variant="outline" className="rounded-2xl border-surface-high text-foreground text-sm">
+                <Link2 className="w-4 h-4 mr-2" />Vincular Produto
               </Button>
-            </DialogTrigger>
+            )}
+            <Dialog open={addOpen} onOpenChange={setAddOpen}>
+              <DialogTrigger asChild>
+                <Button className="rounded-2xl bg-primary hover:bg-primary/80 text-background">
+                  <Plus className="w-4 h-4 mr-2" />
+                  Novo Produto
+                </Button>
+              </DialogTrigger>
             <DialogContent className="bg-surface-low border-surface-mid">
               <DialogHeader>
                 <DialogTitle>Novo Produto</DialogTitle>
@@ -160,7 +230,36 @@ export default function Products() {
               </div>
             </DialogContent>
           </Dialog>
+          </div>
         </div>
+
+        {/* Vincular Produto Dialog */}
+        <Dialog open={vincularOpen} onOpenChange={v => { setVincularOpen(v); if (!v) { setLinkCodeInput(""); setVincularError(""); } }}>
+          <DialogContent className="bg-surface-low border-surface-mid">
+            <DialogHeader><DialogTitle>Vincular Produto Parceiro</DialogTitle></DialogHeader>
+            <p className="text-xs text-muted-foreground -mt-2">
+              Insira o código de vinculação fornecido pelo parceiro para adicionar o produto à sua lista.
+            </p>
+            <div className="space-y-3">
+              <Input
+                placeholder="Ex: LINK-ABCD1234"
+                value={linkCodeInput}
+                onChange={e => { setLinkCodeInput(e.target.value.toUpperCase()); setVincularError(""); }}
+                className="bg-surface-mid border-0 rounded-xl text-sm font-mono tracking-widest"
+              />
+              {vincularError && (
+                <p className="text-xs text-red-400 bg-red-500/10 rounded-xl px-3 py-2">{vincularError}</p>
+              )}
+              <Button
+                className="w-full rounded-xl bg-primary hover:bg-primary/80"
+                onClick={handleVincular}
+                disabled={vincularLoading || !linkCodeInput.trim()}
+              >
+                {vincularLoading ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Vinculando...</> : "Vincular Produto"}
+              </Button>
+            </div>
+          </DialogContent>
+        </Dialog>
 
         {/* Search */}
         <div className="relative mb-4">
@@ -239,6 +338,7 @@ export default function Products() {
                       </div>
                       <div className="flex gap-1.5 flex-wrap justify-end">
                         {isShared && <Badge className="text-xs bg-blue-500/20 text-blue-400">Parceiro</Badge>}
+                        {(product as any).isLinked && <Badge className="text-xs bg-purple-500/20 text-purple-400">Vinculado</Badge>}
                         <Badge className={`text-xs ${getStatusColor(product.status)}`}>{product.status}</Badge>
                       </div>
                     </div>
