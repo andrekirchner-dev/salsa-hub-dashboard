@@ -1,0 +1,22 @@
+[debug] [2026-04-08T23:05:59.720Z] ----------------------------------------------------------------------
+[debug] [2026-04-08T23:05:59.721Z] Command:       /usr/bin/node /sessions/keen-festive-wozniak/firebase-tools/bin/firebase deploy --only storage
+[debug] [2026-04-08T23:05:59.722Z] CLI Version:   15.13.0
+[debug] [2026-04-08T23:05:59.722Z] Platform:      linux
+[debug] [2026-04-08T23:05:59.722Z] Node Version:  v22.22.0
+[debug] [2026-04-08T23:05:59.722Z] Time:          Wed Apr 08 2026 20:05:59 GMT-0300 (Brasilia Standard Time)
+[debug] [2026-04-08T23:05:59.722Z] ----------------------------------------------------------------------
+[debug] 
+[debug] [2026-04-08T23:05:59.724Z] >>> [apiv2][query] GET https://firebase-public.firebaseio.com/cli.json [none]
+[error] 
+[error] Error: No currently active project.
+To run this command, you need to specify a project. You have two options:
+- Run this command with --project <alias_or_project_id>.
+- Set an active project by running firebase use --add, then rerun this command.
+To list all the Firebase projects to which you have access, run firebase projects:list.
+To learn about active projects for the CLI, visit https://firebase.google.com/docs/cli#project_aliases
+
+
+[debug] [2026-04-08T23:06:01.209Z] <<< [apiv2][status] GET https://firebase-public.firebaseio.com/cli.json 403
+[debug] [2026-04-08T23:06:01.209Z] <<< [apiv2][body] GET https://firebase-public.firebaseio.com/cli.json "Connection blocked by network allowlist"
+[warn] ⚠  Unable to fetch the CLI MOTD and remote config. This is not a fatal error, but may indicate an issue with your network connection. 
+[debug] [2026-04-08T23:06:01.209Z] Failed to fetch MOTD FirebaseError: Unable to parse JSON: SyntaxError: Unexpected token 'C', "Connection"... is not valid JSON

@@ -14,7 +14,7 @@ import {
 
 interface Task {
   id: string;
-  label: string;
+  title: string;
   priority: "Alta" | "Media" | "Baixa";
   done: boolean;
 }
@@ -59,7 +59,10 @@ export default function Index() {
     if (!uid) return;
     const q = query(collection(db, "users", uid, "tasks"), orderBy("createdAt", "desc"));
     const unsub = onSnapshot(q, (snap) => {
-      setTasks(snap.docs.map(d => ({ id: d.id, ...d.data() } as Task)));
+      setTasks(snap.docs.map(d => {
+        const data = d.data();
+        return { id: d.id, title: data.title ?? data.label ?? "", priority: data.priority ?? "Media", done: data.done ?? false } as Task;
+      }));
     });
     return unsub;
   }, [uid]);
@@ -68,8 +71,9 @@ export default function Index() {
   useEffect(() => {
     if (!uid) return;
     async function loadStats() {
-      const [prodSnap, campaignSnap, meetingSnap] = await Promise.all([
-        getDocs(collection(db, "users", uid, "products")),
+      const [prodSnap, sharedSnap, campaignSnap, meetingSnap] = await Promise.all([
+        getDocs(query(collection(db, "users", uid, "products"), orderBy("createdAt", "desc"))),
+        getDocs(collection(db, "users", uid, "sharedProducts")),
         getDocs(query(collection(db, "users", uid, "campaigns"), where("status", "==", "Ativa"))),
         getDocs(collection(db, "users", uid, "meetings")),
       ]);
@@ -78,7 +82,7 @@ export default function Index() {
       const totalLeads = campaignSnap.docs.reduce((acc, d) => acc + (d.data().leads ?? 0), 0);
 
       setStats({
-        products: prodSnap.size,
+        products: prodSnap.size + sharedSnap.size,
         campaigns: campaignSnap.size,
         meetings: todayMeetings,
         leads: totalLeads,
@@ -110,7 +114,7 @@ export default function Index() {
   const addTask = async () => {
     if (!newLabel.trim()) return;
     await addDoc(collection(db, "users", uid, "tasks"), {
-      label: newLabel.trim(),
+      title: newLabel.trim(),
       priority: newPriority,
       done: false,
       createdAt: serverTimestamp(),
@@ -178,7 +182,7 @@ export default function Index() {
                     onCheckedChange={() => toggleTask(task)}
                     className="rounded-lg border-surface-high data-[state=checked]:bg-primary data-[state=checked]:border-primary"
                   />
-                  <span className={"text-sm flex-1 text-foreground " + (task.done ? "line-through" : "")}>{task.label}</span>
+                  <span className={"text-sm flex-1 text-foreground " + (task.done ? "line-through" : "")}>{task.title}</span>
                   <Badge className={"text-xs flex-shrink-0 " + (task.priority === "Alta" ? "bg-red-500/20 text-red-400" : task.priority === "Baixa" ? "bg-green-500/20 text-green-400" : "bg-yellow-500/20 text-yellow-400")}>{task.priority}</Badge>
                   <button onClick={() => deleteTask(task.id)} className="opacity-0 group-hover:opacity-100 transition-opacity text-red-400 hover:text-red-300">
                     <Trash2 className="w-3.5 h-3.5" />

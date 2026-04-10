@@ -43,7 +43,7 @@ const ALL_STATUSES = Object.keys(STATUS_CONFIG) as Array<keyof typeof STATUS_CON
 
 interface PersonalTask {
   id: string;
-  label: string;
+  title: string;
   description?: string;
   priority: "Alta" | "Media" | "Baixa";
   status: keyof typeof STATUS_CONFIG;
@@ -168,7 +168,7 @@ function PersonalTaskCard({
           <div className="flex-1 min-w-0">
             <div className="flex items-start justify-between gap-2">
               <p className={"text-sm font-medium flex-1 " + (task.done ? "line-through text-muted-foreground" : "text-foreground")}>
-                {task.label}
+                {task.title}
               </p>
               <div className="flex items-center gap-1 flex-shrink-0">
                 <button onClick={() => setExpanded(!expanded)} className="p-1 rounded-lg hover:bg-surface-mid transition-colors">
@@ -280,7 +280,7 @@ export default function TasksManagementPage() {
         const data = d.data();
         return {
           id: d.id,
-          label: data.label ?? data.title ?? "",
+          title: data.title ?? data.label ?? "",
           description: data.description,
           priority: data.priority ?? "Media",
           status: data.status ?? (data.done ? "COMPLETA" : "PENDENTE"),
@@ -330,7 +330,7 @@ export default function TasksManagementPage() {
     if (!newTitle.trim() || !uid) return;
     setSaving(true);
     await addDoc(collection(db, "users", uid, "tasks"), {
-      label: newTitle.trim(),
+      title: newTitle.trim(),
       description: newDescription.trim(),
       priority: newPriority,
       status: "PENDENTE",
@@ -404,7 +404,7 @@ export default function TasksManagementPage() {
   // ── Filtering ─────────────────────────────────────────────────────────────
 
   const filteredPersonal = personalTasks.filter(t => {
-    const matchSearch = t.label.toLowerCase().includes(search.toLowerCase());
+    const matchSearch = t.title.toLowerCase().includes(search.toLowerCase());
     const matchStatus = filterStatus === "todos" || t.status === filterStatus;
     const matchPriority = filterPriority === "todos" || t.priority === filterPriority;
     return matchSearch && matchStatus && matchPriority;

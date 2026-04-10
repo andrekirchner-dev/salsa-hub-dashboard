@@ -225,15 +225,16 @@ export default function Team() {
       createdAt: serverTimestamp(),
     });
 
-    // Write team reference to the member's own teams collection → they see it on their Team page
+    // Escreve SOMENTE uma referência mínima na coleção do membro.
+    // name: denormalizado apenas para exibição na lista.
+    // Dados reais (members, config, teamFunction) sempre lidos de users/{ownerUid}/teams/{id}.
+    // ownerUid é a fonte de verdade — não copiar campos que o membro possa corromper.
     await setDoc(doc(db, "users", targetUser.uid, "teams", selectedTeamId), {
-      name: selectedTeam.name,
-      company: selectedTeam.company ?? "",
-      teamFunction: (selectedTeam as any).teamFunction ?? "",
+      name: selectedTeam.name,  // apenas para exibição na lista
       ownerUid: uid,
       isSharedTeam: true,
       role,
-      createdAt: serverTimestamp(),
+      joinedAt: serverTimestamp(),
     });
 
     // Send notification to the invited user

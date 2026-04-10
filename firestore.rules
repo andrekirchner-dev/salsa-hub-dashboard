@@ -33,6 +33,16 @@ service cloud.firestore {
       allow read, write: if isAppOwner();
     }
 
+    // ── Empresas (coleção global) ─────────────────────────────────────────────
+    // Uma empresa por CEO (companyId == ownerUid).
+    // Qualquer autenticado pode LER (busca de empresa de colegas, vinculação
+    // de produtos entre empresas).
+    // Apenas o dono da empresa (CEO) pode escrever.
+    match /companies/{companyId} {
+      allow read: if isAuthenticated();
+      allow write: if isOwner(companyId) || isAppOwner();
+    }
+
     // ── Códigos de cargo (legado, somente leitura) ────────────────────────────
     match /cargoCodes/{code} {
       allow read: if isAuthenticated();

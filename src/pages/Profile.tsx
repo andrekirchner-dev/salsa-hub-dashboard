@@ -102,9 +102,9 @@ export default function Profile() {
         setCompany(d.company ?? "");
         if (d.avatarUrl) setAvatarUrl(d.avatarUrl);
 
-        // CEO: load company doc + owned products
+        // CEO: load company doc (global /companies/{uid} com fallback legado)
         if (loadedRole === "CEO") {
-          getDoc(doc(db, "users", uid, "company", "profile")).then(cSnap => {
+          getDoc(doc(db, "companies", uid)).then(cSnap => {
             if (cSnap.exists()) {
               const c = cSnap.data();
               setCompanyName(c.name ?? "");
@@ -113,6 +113,19 @@ export default function Profile() {
               setCompanySite(c.site ?? "");
               setCompanyPhone2(c.phone ?? "");
               setCompanyAddress(c.address ?? "");
+            } else {
+              // Fallback: migrar do caminho legado se existir
+              getDoc(doc(db, "users", uid, "company", "profile")).then(legacySnap => {
+                if (legacySnap.exists()) {
+                  const c = legacySnap.data();
+                  setCompanyName(c.name ?? "");
+                  setCompanyCNPJ(c.cnpj ?? "");
+                  setCompanyCategory(c.category ?? "");
+                  setCompanySite(c.site ?? "");
+                  setCompanyPhone2(c.phone ?? "");
+                  setCompanyAddress(c.address ?? "");
+                }
+              });
             }
           });
           getDocs(query(collection(db, "users", uid, "products"), where("archived", "==", false))).then(snap => {
@@ -182,15 +195,23 @@ export default function Profile() {
   const handleSaveCompany = async () => {
     if (!uid) return;
     setCompanySaving(true);
-    await setDoc(doc(db, "users", uid, "company", "profile"), {
+    const companyData = {
       name: companyName.trim(),
       cnpj: companyCNPJ.trim(),
       category: companyCategory.trim(),
       site: companySite.trim(),
       phone: companyPhone2.trim(),
       address: companyAddress.trim(),
+      ownerUid: uid,
       updatedAt: serverTimestamp(),
-    });
+    };
+    // Escrita primária: coleção global /companies/{uid}
+    // companyId == ownerUid para facilitar lookups diretos
+    await setDoc(doc(db, "companies", uid), companyData);
+    // Mantém caminho legado para compatibilidade com código existente
+    await setDoc(doc(db, "users", uid, "company", "profile"), companyData);
+    // Registra companyId no perfil do usuário para vinculação empresa ↔ usuário
+    await updateDoc(doc(db, "profiles", uid), { companyId: uid });
     setCompanySaving(false);
     toast({ title: "Empresa atualizada!", description: "Perfil da empresa salvo." });
   };

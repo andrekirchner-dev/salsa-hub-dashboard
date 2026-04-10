@@ -130,15 +130,21 @@ export default function Products() {
         }
         // Incremento atômico dentro da transação
         tx.update(codeDocRef, { usedCount: fresh.usedCount + 1 });
-        // Vincula o produto ao usuário atual
-        tx.set(doc(db, "users", uid, "products", codeData.productId), {
-          ...productData,
-          isLinked: true,
-          linkedFromUid: codeData.ownerUid,
+        // Salva REFERÊNCIA em sharedProducts (não cópia completa).
+        // Assim o produto original continua como fonte de verdade:
+        // atualizações no produto original aparecem automaticamente
+        // porque ProductDetail sempre carrega de users/{ownerUid}/products/{id}.
+        tx.set(doc(db, "users", uid, "sharedProducts", codeData.productId), {
+          id: codeData.productId,
+          name: productData.name,     // denormalizado só para exibição na lista
+          type: productData.type,
+          status: productData.status,
+          progress: productData.progress ?? 0,
+          ownerUid: codeData.ownerUid,
+          isLinked: true,             // distingue de "compartilhado por equipe"
+          isShared: true,
           linkedCode: code,
           linkedAt: serverTimestamp(),
-          progress: productData.progress ?? 0,
-          createdAt: productData.createdAt ?? serverTimestamp(),
         });
       });
 
