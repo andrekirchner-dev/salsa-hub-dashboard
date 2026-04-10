@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/react";
 import { lazy, Suspense, useEffect, useState } from "react";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { onAuthStateChanged } from "firebase/auth";
@@ -111,6 +112,30 @@ const App = () => {
   }
 
   return (
+    <Sentry.ErrorBoundary
+      fallback={({ error, resetError }) => (
+        <div className="min-h-screen bg-background flex items-center justify-center p-6">
+          <div className="max-w-md w-full bg-surface-low rounded-3xl border border-surface-mid p-8 text-center space-y-4">
+            <div className="w-14 h-14 rounded-2xl bg-red-500/10 flex items-center justify-center mx-auto">
+              <span className="text-2xl">⚠️</span>
+            </div>
+            <h2 className="text-lg font-bold text-foreground">Algo deu errado</h2>
+            <p className="text-sm text-muted-foreground">
+              Um erro inesperado aconteceu. Nossa equipe já foi notificada automaticamente.
+            </p>
+            <p className="text-xs text-muted-foreground font-mono bg-surface-mid rounded-xl px-3 py-2 break-all">
+              {String(error).slice(0, 120)}
+            </p>
+            <button
+              onClick={resetError}
+              className="w-full py-2.5 rounded-2xl bg-primary text-background text-sm font-semibold hover:bg-primary/80 transition-colors"
+            >
+              Tentar novamente
+            </button>
+          </div>
+        </div>
+      )}
+    >
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
         <Toaster />
@@ -170,6 +195,7 @@ const App = () => {
         </BrowserRouter>
       </TooltipProvider>
     </QueryClientProvider>
+    </Sentry.ErrorBoundary>
   );
 };
 
