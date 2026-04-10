@@ -67,6 +67,16 @@ export default function SetupProfile({ user, onComplete }: Props) {
         return;
       }
 
+      // Verifica expiração do código de cargo
+      if (codeData.expiresAt) {
+        const expiry = codeData.expiresAt.toDate ? codeData.expiresAt.toDate() : new Date(codeData.expiresAt);
+        if (expiry < new Date()) {
+          setError("Este código de cargo expirou. Solicite um novo convite à equipe ADM.");
+          setLoading(false);
+          return;
+        }
+      }
+
       // Generate username from name: lowercase, spaces → dots, remove special chars
       const username = name.trim().toLowerCase().replace(/\s+/g, ".").replace(/[^a-z0-9._]/g, "");
 

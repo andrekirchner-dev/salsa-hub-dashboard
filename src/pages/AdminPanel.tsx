@@ -15,6 +15,7 @@ import {
   doc, query, orderBy, serverTimestamp, getDocs, getDoc, setDoc,
 } from "firebase/firestore";
 import { useNavigate } from "react-router-dom";
+import { writeAuditLog } from "@/lib/auditLog";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 const ADMIN_EMAILS = ["kirchner.andre@gmail.com", "lucas.xaviercr97@gmail.com"];
@@ -40,7 +41,14 @@ interface RoleCode {
   usedCount: number;
   active: boolean;
   createdAt: any;
+  expiresAt?: any;
   note?: string;
+}
+
+function isCodeExpired(code: RoleCode): boolean {
+  if (!code.expiresAt) return false;
+  const d = code.expiresAt.toDate ? code.expiresAt.toDate() : new Date(code.expiresAt);
+  return d < new Date();
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -284,13 +292,20 @@ function RoleCodeCard({ code, onDelete, onToggle, onCopy }: {
             <Badge className={code.active ? "bg-green-500/20 text-green-400" : "bg-gray-500/20 text-gray-400"}>
               {code.active ? "Ativo" : "Inativo"}
             </Badge>
+            {isCodeExpired(code) && (
+              <Badge className="bg-red-500/20 text-red-400">Expirado</Badge>
+            )}
           </div>
           {code.note && <p className="text-xs text-muted-foreground mb-2">{code.note}</p>}
-          <div className="flex items-center gap-3 text-xs text-muted-foreground">
+          <div className="flex items-center gap-3 text-xs text-muted-foreground flex-wrap">
             <span className="flex items-center gap-1">
               <UserCheck className="w-3 h-3" />
               {code.usedCount}/{code.maxUses === 0 ? "∞" : code.maxUses} usos
             </span>
+            {code.expiresAt && (() => {
+              const d = code.expiresAt.toDate ? code.expiresAt.toDate() : new Date(code.expiresAt);
+              return <span>Expira: {d.toLocaleDateString("pt-BR")}</span>;
+            })()}
           </div>
         </div>
         <div className="flex items-center gap-1.5 flex-shrink-0">
@@ -388,10 +403,16 @@ export default function AdminPanel() {
   const activeCodesCount = roleCodes.filter(c => c.active).length;
 
   // ── Handlers ────────────────────────────────────────────────────────────────
-  const handleApprove = (id: string) =>
-    updateDoc(doc(db, "admin", uid, "requests", id), { status: "Aprovado" });
-  const handleReject = (id: string) =>
-    updateDoc(doc(db, "admin", uid, "requests", id), { status: "Rejeitado" });
+  const handleApprove = async (id: string) => {
+    const req = requests.find(r => r.id === id);
+    await updateDoc(doc(db, "admin", uid, "requests", id), { status: "Aprovado" });
+    await writeAuditLog("user.approve", id, { requestedRole: req?.requestedRole, email: req?.email });
+  };
+  const handleReject = async (id: string) => {
+    const req = requests.find(r => r.id === id);
+    await updateDoc(doc(db, "admin", uid, "requests", id), { status: "Rejeitado" });
+    await writeAuditLog("user.reject", id, { email: req?.email });
+  };
 
   const handleCreateCompany = async () => {
     if (!newCompany.name.trim()) return;
@@ -408,7 +429,9 @@ export default function AdminPanel() {
     if (!newCodeRole) return;
     setSaving(true);
     const code = generateCode(newCodeRole);
-    await addDoc(collection(db, "roleCodes"), {
+    const expiresAt = new Date();
+    expiresAt.setDate(expiresAt.getDate() + 7); // expira em 7 dias
+    const ref = await addDoc(collection(db, "roleCodes"), {
       code,
       role: newCodeRole,
       maxUses: newCodeMaxUses,
@@ -417,7 +440,9 @@ export default function AdminPanel() {
       note: newCodeNote.trim(),
       createdBy: uid,
       createdAt: serverTimestamp(),
+      expiresAt,
     });
+    await writeAuditLog("code.create", ref.id, { code, role: newCodeRole, maxUses: newCodeMaxUses });
     setNewCodeRole("Analista");
     setNewCodeMaxUses(1);
     setNewCodeNote("");
@@ -425,11 +450,16 @@ export default function AdminPanel() {
     setSaving(false);
   };
 
-  const handleDeleteCode = (id: string) =>
-    deleteDoc(doc(db, "roleCodes", id));
+  const handleDeleteCode = async (id: string) => {
+    const c = roleCodes.find(rc => rc.id === id);
+    await deleteDoc(doc(db, "roleCodes", id));
+    await writeAuditLog("code.delete", id, { code: c?.code, role: c?.role });
+  };
 
-  const handleToggleCode = (id: string, active: boolean) =>
-    updateDoc(doc(db, "roleCodes", id), { active });
+  const handleToggleCode = async (id: string, active: boolean) => {
+    await updateDoc(doc(db, "roleCodes", id), { active });
+    await writeAuditLog("code.toggle", id, { active });
+  };
 
   const handleCopyCode = (code: string) => {
     navigator.clipboard.writeText(code).catch(() => {});
@@ -438,8 +468,9 @@ export default function AdminPanel() {
   };
 
   const handleDeleteUser = async (userId: string) => {
-    // Remove from profiles (soft: mark inactive)
+    const u = appUsers.find(u => u.id === userId);
     await updateDoc(doc(db, "profiles", userId), { status: "inactive" });
+    await writeAuditLog("user.deactivate", userId, { name: u?.name, email: u?.email, role: u?.role });
   };
 
   // ── Render ──────────────────────────────────────────────────────────────────

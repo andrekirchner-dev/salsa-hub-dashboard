@@ -6,11 +6,28 @@ import { AppSidebar } from "./AppSidebar";
 import { MobileNav } from "./MobileNav";
 import { NotificationsDrawer } from "@/components/NotificationsDrawer";
 import { auth, db } from "@/integrations/firebase/client";
-import { collection, query, where, onSnapshot } from "firebase/firestore";
+import { collection, query, where, onSnapshot, getDoc, doc } from "firebase/firestore";
+import { signOut } from "firebase/auth";
 
 export function AppLayout() {
   const [notifOpen, setNotifOpen] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
+
+  // ── Bloqueia usuários marcados como "inactive" pelo AdminPanel ──────────────
+  // O Firebase Auth client SDK não pode desabilitar contas remotamente —
+  // isso exige Admin SDK (Cloud Function). Como medida de proteção client-side,
+  // verificamos o status do perfil a cada mount do layout e forçamos logout
+  // se o usuário estiver inativo. Isso impede o uso do app mesmo que o token
+  // ainda seja tecnicamente válido.
+  useEffect(() => {
+    const uid = auth.currentUser?.uid;
+    if (!uid) return;
+    getDoc(doc(db, "profiles", uid)).then(snap => {
+      if (snap.exists() && snap.data()?.status === "inactive") {
+        signOut(auth);
+      }
+    });
+  }, []);
 
   useEffect(() => {
     const uid = auth.currentUser?.uid;

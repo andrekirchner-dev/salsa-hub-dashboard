@@ -15,13 +15,12 @@ import { auth, db } from "@/integrations/firebase/client";
 import {
   collection, onSnapshot, addDoc, updateDoc, deleteDoc,
   doc, query, orderBy, serverTimestamp, getDocs, where, getDoc,
+  limit, startAfter, QueryDocumentSnapshot, DocumentData,
 } from "firebase/firestore";
 
-// ── Constants ─────────────────────────────────────────────────────────────────
+import { canAssignTasks as canAssign } from "@/lib/permissions";
 
-const CLEVEL = ["CEO", "CFO", "CMO", "COO"];
-const MANAGEMENT = ["Gerente", "Coordenador"];
-const canAssign = (role: string) => CLEVEL.includes(role) || MANAGEMENT.includes(role);
+// ── Constants ─────────────────────────────────────────────────────────────────
 
 const STATUS_CONFIG = {
   PENDENTE:  { label: "Pendente",    icon: Circle,        color: "text-blue-400",  badge: "bg-blue-500/20 text-blue-400",   border: "border-l-blue-500"    },
@@ -264,6 +263,12 @@ export default function TasksManagementPage() {
   const [loadingAssignData, setLoadingAssignData] = useState(false);
   const [assigning, setAssigning] = useState(false);
 
+  // Paginação de profiles
+  const PROFILES_PAGE_SIZE = 20;
+  const [profilesLastDoc, setProfilesLastDoc] = useState<QueryDocumentSnapshot<DocumentData> | null>(null);
+  const [hasMoreProfiles, setHasMoreProfiles] = useState(false);
+  const [loadingMoreProfiles, setLoadingMoreProfiles] = useState(false);
+
   // ── Load user role ────────────────────────────────────────────────────────
   useEffect(() => {
     if (!uid) return;
@@ -314,15 +319,33 @@ export default function TasksManagementPage() {
   useEffect(() => {
     if (!assignOpen || !uid) return;
     setLoadingAssignData(true);
+    setProfilesLastDoc(null);
     Promise.all([
-      getDocs(collection(db, "profiles")),
+      getDocs(query(collection(db, "profiles"), orderBy("name"), limit(PROFILES_PAGE_SIZE))),
       getDocs(query(collection(db, "users", uid, "teams"), orderBy("createdAt", "asc"))),
     ]).then(([profSnap, teamsSnap]) => {
-      setRegisteredUsers(profSnap.docs.filter(d => d.id !== uid).map(d => ({ uid: d.id, ...d.data() } as RegisteredUser)));
+      const users = profSnap.docs.filter(d => d.id !== uid).map(d => ({ uid: d.id, ...d.data() } as RegisteredUser));
+      setRegisteredUsers(users);
+      const last = profSnap.docs[profSnap.docs.length - 1] ?? null;
+      setProfilesLastDoc(last);
+      setHasMoreProfiles(profSnap.size === PROFILES_PAGE_SIZE);
       setMyTeams(teamsSnap.docs.map(d => ({ id: d.id, ...d.data() } as TeamItem)));
       setLoadingAssignData(false);
     }).catch(() => setLoadingAssignData(false));
   }, [assignOpen, uid]);
+
+  const loadMoreProfiles = async () => {
+    if (!uid || !profilesLastDoc || loadingMoreProfiles) return;
+    setLoadingMoreProfiles(true);
+    const snap = await getDocs(
+      query(collection(db, "profiles"), orderBy("name"), startAfter(profilesLastDoc), limit(PROFILES_PAGE_SIZE))
+    );
+    const more = snap.docs.filter(d => d.id !== uid).map(d => ({ uid: d.id, ...d.data() } as RegisteredUser));
+    setRegisteredUsers(prev => [...prev, ...more]);
+    setProfilesLastDoc(snap.docs[snap.docs.length - 1] ?? profilesLastDoc);
+    setHasMoreProfiles(snap.size === PROFILES_PAGE_SIZE);
+    setLoadingMoreProfiles(false);
+  };
 
   // ── Handlers ──────────────────────────────────────────────────────────────
 
@@ -767,6 +790,12 @@ export default function TasksManagementPage() {
                           </div>
                         </button>
                       ))}
+                      {hasMoreProfiles && !userSearchQuery.trim() && (
+                        <button onClick={loadMoreProfiles} disabled={loadingMoreProfiles}
+                          className="w-full text-xs text-primary hover:text-primary/80 py-2 text-center flex items-center justify-center gap-1">
+                          {loadingMoreProfiles ? <><Loader2 className="w-3 h-3 animate-spin" />Carregando...</> : "Carregar mais"}
+                        </button>
+                      )}
                     </div>
                   </>
                 )}

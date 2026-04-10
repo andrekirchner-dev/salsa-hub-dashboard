@@ -11,6 +11,38 @@ import { doc, getDoc, updateDoc, deleteDoc, setDoc, addDoc, getDocs, collection,
 import { ref, uploadBytesResumable, getDownloadURL } from "firebase/storage";
 import { useToast } from "@/hooks/use-toast";
 
+// ── Utilitários de CNPJ ──────────────────────────────────────────────────────
+
+/** Formata uma string de dígitos como CNPJ: 00.000.000/0000-00 */
+function formatCNPJ(value: string): string {
+  const digits = value.replace(/\D/g, "").slice(0, 14);
+  if (digits.length <= 2) return digits;
+  if (digits.length <= 5) return `${digits.slice(0,2)}.${digits.slice(2)}`;
+  if (digits.length <= 8) return `${digits.slice(0,2)}.${digits.slice(2,5)}.${digits.slice(5)}`;
+  if (digits.length <= 12) return `${digits.slice(0,2)}.${digits.slice(2,5)}.${digits.slice(5,8)}/${digits.slice(8)}`;
+  return `${digits.slice(0,2)}.${digits.slice(2,5)}.${digits.slice(5,8)}/${digits.slice(8,12)}-${digits.slice(12)}`;
+}
+
+/** Valida CNPJ incluindo verificação dos dois dígitos verificadores */
+function isValidCNPJ(cnpj: string): boolean {
+  const n = cnpj.replace(/\D/g, "");
+  if (n.length !== 14) return false;
+  if (/^(\d)\1+$/.test(n)) return false; // todos iguais: inválido
+
+  const calc = (len: number) => {
+    let sum = 0;
+    let pos = len - 7;
+    for (let i = len; i >= 1; i--) {
+      sum += parseInt(n.charAt(len - i)) * pos--;
+      if (pos < 2) pos = 9;
+    }
+    return sum % 11 < 2 ? 0 : 11 - (sum % 11);
+  };
+  return calc(12) === parseInt(n.charAt(12)) && calc(13) === parseInt(n.charAt(13));
+}
+
+// ── Constantes de cargo ───────────────────────────────────────────────────────
+
 const ROLE_COLOR: Record<string, string> = {
   CEO: "bg-primary/20 text-primary",
   CFO: "bg-primary/20 text-primary",
@@ -49,6 +81,7 @@ export default function Profile() {
   const [companyPhone2, setCompanyPhone2] = useState("");
   const [companyAddress, setCompanyAddress] = useState("");
   const [companySaving, setCompanySaving] = useState(false);
+  const [cnpjError, setCnpjError] = useState("");
 
   // CEO linkCode generator
   interface OwnedProduct { id: string; name: string; }
@@ -194,6 +227,15 @@ export default function Profile() {
 
   const handleSaveCompany = async () => {
     if (!uid) return;
+
+    // Valida CNPJ se preenchido
+    if (companyCNPJ.trim()) {
+      if (!isValidCNPJ(companyCNPJ)) {
+        setCnpjError("CNPJ inválido. Verifique o número e tente novamente.");
+        return;
+      }
+    }
+    setCnpjError("");
     setCompanySaving(true);
     const companyData = {
       name: companyName.trim(),
@@ -424,8 +466,18 @@ export default function Profile() {
                   <label className="text-xs text-muted-foreground block mb-1.5 flex items-center gap-1.5">
                     <Hash className="w-3.5 h-3.5" /> CNPJ
                   </label>
-                  <input value={companyCNPJ} onChange={e => setCompanyCNPJ(e.target.value)}
-                    placeholder="00.000.000/0000-00" className="w-full bg-surface-mid border-0 rounded-2xl px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground outline-none focus:ring-1 focus:ring-primary/40" />
+                  <input
+                    value={companyCNPJ}
+                    onChange={e => {
+                      const formatted = formatCNPJ(e.target.value);
+                      setCompanyCNPJ(formatted);
+                      if (cnpjError) setCnpjError("");
+                    }}
+                    placeholder="00.000.000/0000-00"
+                    maxLength={18}
+                    className={"w-full bg-surface-mid border-0 rounded-2xl px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground outline-none focus:ring-1 " + (cnpjError ? "ring-1 ring-red-500 focus:ring-red-500" : "focus:ring-primary/40")}
+                  />
+                  {cnpjError && <p className="text-xs text-red-400 mt-1 px-1">{cnpjError}</p>}
                 </div>
                 <div>
                   <label className="text-xs text-muted-foreground block mb-1.5">Categoria</label>

@@ -229,6 +229,16 @@ service cloud.firestore {
       }
     }
 
+    // ── Logs de auditoria ─────────────────────────────────────────────────────
+    // Qualquer autenticado pode CRIAR (grava ação própria).
+    // LEITURA e DELEÇÃO apenas para app owners (compliance).
+    // Sem allow update — logs são imutáveis.
+    match /auditLogs/{logId} {
+      allow create: if isAuthenticated()
+        && request.resource.data.actorUid == request.auth.uid;
+      allow read, delete: if isAppOwner();
+    }
+
     // ── Bloqueia tudo o mais ──────────────────────────────────────────────────
     match /{document=**} {
       allow read, write: if false;

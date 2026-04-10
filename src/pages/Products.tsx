@@ -111,6 +111,15 @@ export default function Products() {
       const codeData = codesSnap.docs[0].data();
       if (codeData.ownerUid === uid) { setVincularError("Você não pode vincular seu próprio produto."); return; }
 
+      // Verifica expiração (campo expiresAt pode ser Date ou Firestore Timestamp)
+      if (codeData.expiresAt) {
+        const expiry = codeData.expiresAt.toDate ? codeData.expiresAt.toDate() : new Date(codeData.expiresAt);
+        if (expiry < new Date()) {
+          setVincularError("Este código expirou. Solicite um novo código ao responsável.");
+          return;
+        }
+      }
+
       // Pré-validar produto antes da transação (leitura barata fora da tx)
       const productSnap = await getDoc(doc(db, "users", codeData.ownerUid, "products", codeData.productId));
       if (!productSnap.exists()) { setVincularError("Produto referenciado não encontrado."); return; }

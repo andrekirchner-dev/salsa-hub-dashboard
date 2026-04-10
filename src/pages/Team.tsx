@@ -11,6 +11,7 @@ import { auth, db } from "@/integrations/firebase/client";
 import {
   collection, onSnapshot, addDoc, deleteDoc, setDoc, updateDoc,
   doc, query, orderBy, serverTimestamp, getDoc, getDocs,
+  limit, startAfter, QueryDocumentSnapshot, DocumentData,
 } from "firebase/firestore";
 
 function generateRoleCode(role: string): string {
@@ -21,21 +22,13 @@ function generateRoleCode(role: string): string {
   return `${prefix}-${suffix}`;
 }
 
+import { canManageTeam, canFullControl, getRoleBadgeColor, ALL_ROLES, TEAM_MEMBER_ROLES } from "@/lib/permissions";
+
 // ── Constants ─────────────────────────────────────────────────────────────────
 
-const CLEVEL = ["CEO", "CFO", "CMO", "COO"];
-const MANAGEMENT = ["Gerente", "Coordenador"];
-const TEAM_ROLES = ["Analista", "Técnico", "Assistente"];
-const ALL_ROLES = [...CLEVEL, ...MANAGEMENT, ...TEAM_ROLES];
+const TEAM_ROLES = TEAM_MEMBER_ROLES; // alias local para compatibilidade com JSX existente
 
-const canManageTeam = (role: string) => CLEVEL.includes(role) || MANAGEMENT.includes(role);
-const canFullControl = (role: string) => CLEVEL.includes(role);
-
-const getRoleColor = (role: string) => {
-  if (CLEVEL.includes(role)) return "bg-primary/20 text-primary";
-  if (MANAGEMENT.includes(role)) return "bg-purple-500/20 text-purple-400";
-  return "bg-blue-500/20 text-blue-400";
-};
+const getRoleColor = (role: string) => getRoleBadgeColor(role);
 
 // ── Interfaces ────────────────────────────────────────────────────────────────
 
@@ -77,6 +70,10 @@ export default function Team() {
   const [inviteTab, setInviteTab] = useState<"registered" | "email">("registered");
   const [registeredUsers, setRegisteredUsers] = useState<RegisteredUser[]>([]);
   const [loadingUsers, setLoadingUsers] = useState(false);
+  const PROFILES_PAGE_SIZE = 20;
+  const [profilesLastDoc, setProfilesLastDoc] = useState<QueryDocumentSnapshot<DocumentData> | null>(null);
+  const [hasMoreProfiles, setHasMoreProfiles] = useState(false);
+  const [loadingMoreProfiles, setLoadingMoreProfiles] = useState(false);
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteName, setInviteName] = useState("");
   const [inviteRole, setInviteRole] = useState("Analista");
@@ -162,16 +159,36 @@ export default function Team() {
   useEffect(() => {
     if (!inviteOpen) return;
     setLoadingUsers(true);
-    getDocs(collection(db, "profiles")).then((snap) => {
-      const memberUids = new Set(members.map(m => m.uid).filter(Boolean));
+    setProfilesLastDoc(null);
+    const memberUids = new Set(members.map(m => m.uid).filter(Boolean));
+    getDocs(query(collection(db, "profiles"), orderBy("name"), limit(PROFILES_PAGE_SIZE))).then((snap) => {
       setRegisteredUsers(
         snap.docs
           .filter(d => d.id !== uid && !memberUids.has(d.id))
           .map(d => ({ uid: d.id, ...d.data() } as RegisteredUser))
       );
+      const last = snap.docs[snap.docs.length - 1] ?? null;
+      setProfilesLastDoc(last);
+      setHasMoreProfiles(snap.size === PROFILES_PAGE_SIZE);
       setLoadingUsers(false);
     }).catch(() => setLoadingUsers(false));
   }, [inviteOpen, uid, members]);
+
+  const loadMoreProfiles = async () => {
+    if (!profilesLastDoc || loadingMoreProfiles) return;
+    setLoadingMoreProfiles(true);
+    const memberUids = new Set(members.map(m => m.uid).filter(Boolean));
+    const snap = await getDocs(
+      query(collection(db, "profiles"), orderBy("name"), startAfter(profilesLastDoc), limit(PROFILES_PAGE_SIZE))
+    );
+    const more = snap.docs
+      .filter(d => d.id !== uid && !memberUids.has(d.id))
+      .map(d => ({ uid: d.id, ...d.data() } as RegisteredUser));
+    setRegisteredUsers(prev => [...prev, ...more]);
+    setProfilesLastDoc(snap.docs[snap.docs.length - 1] ?? profilesLastDoc);
+    setHasMoreProfiles(snap.size === PROFILES_PAGE_SIZE);
+    setLoadingMoreProfiles(false);
+  };
 
   // ── Sync edit fields when selected team changes ───────────────────────────
   useEffect(() => {
@@ -271,6 +288,9 @@ export default function Team() {
 
     // Auto-generate a roleCode for this invite
     const code = generateRoleCode(inviteRole);
+    const expiresAt = new Date();
+    expiresAt.setDate(expiresAt.getDate() + 7); // expira em 7 dias
+
     await addDoc(collection(db, "roleCodes"), {
       code,
       role: inviteRole,
@@ -279,7 +299,9 @@ export default function Team() {
       active: true,
       createdAt: serverTimestamp(),
       createdBy: uid,
+      expiresAt,
       note: `Convite para ${inviteEmail.trim()}`,
+      restrictedToEmail: inviteEmail.trim().toLowerCase(), // só este email pode usar
     });
 
     await addDoc(collection(db, "invites"), {
@@ -293,19 +315,25 @@ export default function Team() {
       teamId: selectedTeamId,
       teamName: selectedTeam.name,
       status: "pending",
+      expiresAt,
       createdAt: serverTimestamp(),
     });
 
-    // Open mailto: so the inviter can send the email directly
+    // ⚠️ SEGURANÇA: O código NÃO é enviado no corpo do email.
+    // O convidado acessa o app com seu email — o sistema encontra o convite
+    // automaticamente via /invites (campo inviteeEmail) e entrega o código
+    // somente após autenticação. Isso evita que o código seja encaminhado
+    // por email para terceiros.
     const appUrl = window.location.origin;
-    const subject = encodeURIComponent(`Convite para o ${selectedTeam.name} no SalsaHub`);
+    const subject = encodeURIComponent(`Você foi convidado para o ${selectedTeam.name} no SalsaHub`);
     const body = encodeURIComponent(
       `Olá${inviteName.trim() ? `, ${inviteName.trim()}` : ""}!\n\n` +
       `${userName} convidou você para fazer parte da equipe "${selectedTeam.name}" no SalsaHub como ${inviteRole}.\n\n` +
-      `Acesse o app: ${appUrl}\n\n` +
-      `Ao criar sua conta, use o código de acesso abaixo:\n\n` +
-      `🔑 Código: ${code}\n\n` +
-      `Este código é válido para 1 uso.\n\nBem-vindo(a)!`
+      `Para aceitar o convite:\n` +
+      `1. Acesse o app: ${appUrl}\n` +
+      `2. Faça login com este email (${inviteEmail.trim()})\n` +
+      `3. Seu código de acesso será apresentado automaticamente.\n\n` +
+      `O convite expira em 7 dias.\n\nBem-vindo(a)!`
     );
     window.open(`mailto:${inviteEmail.trim()}?subject=${subject}&body=${body}`, "_blank");
 
@@ -321,17 +349,20 @@ export default function Team() {
   };
 
   // Only show users when search has text
+  // Com paginação: sem busca mostra a página carregada; com busca filtra localmente
   const filteredUsers = inviteSearch.trim()
     ? registeredUsers.filter(u =>
         u.name?.toLowerCase().includes(inviteSearch.toLowerCase()) ||
         u.email?.toLowerCase().includes(inviteSearch.toLowerCase())
       )
-    : [];
+    : registeredUsers;
 
   const handleGenerateCode = async () => {
     if (codeSaving) return;
     setCodeSaving(true);
     const code = generateRoleCode(codeGenRole);
+    const expiresAt = new Date();
+    expiresAt.setDate(expiresAt.getDate() + 7); // expira em 7 dias
     await addDoc(collection(db, "roleCodes"), {
       code,
       role: codeGenRole,
@@ -340,6 +371,7 @@ export default function Team() {
       active: true,
       createdAt: serverTimestamp(),
       createdBy: uid,
+      expiresAt,
     });
     setGeneratedCode(code);
     setCodeSaving(false);
@@ -657,11 +689,6 @@ export default function Team() {
                     <Loader2 className="w-4 h-4 animate-spin" />
                     <span className="text-sm">Buscando usuários...</span>
                   </div>
-                ) : !inviteSearch.trim() ? (
-                  <div className="text-center py-6 text-muted-foreground">
-                    <Search className="w-8 h-8 mx-auto mb-2 opacity-30" />
-                    <p className="text-sm">Digite um nome ou email para buscar.</p>
-                  </div>
                 ) : filteredUsers.length === 0 ? (
                   <div className="text-center py-8 text-muted-foreground">
                     <p className="text-sm">Nenhum usuário encontrado.</p>
@@ -670,28 +697,36 @@ export default function Team() {
                     </button>
                   </div>
                 ) : (
-                  filteredUsers.map(user => {
-                    const alreadyAdded = invitedUids.has(user.uid);
-                    return (
-                      <div key={user.uid}
-                        className="flex items-center gap-3 p-3 rounded-2xl bg-surface-mid">
-                        <div className="w-9 h-9 rounded-full bg-primary/20 text-primary flex items-center justify-center font-bold text-xs flex-shrink-0">
-                          {user.name?.charAt(0).toUpperCase()}
+                  <>
+                    {filteredUsers.map(user => {
+                      const alreadyAdded = invitedUids.has(user.uid);
+                      return (
+                        <div key={user.uid}
+                          className="flex items-center gap-3 p-3 rounded-2xl bg-surface-mid">
+                          <div className="w-9 h-9 rounded-full bg-primary/20 text-primary flex items-center justify-center font-bold text-xs flex-shrink-0">
+                            {user.name?.charAt(0).toUpperCase()}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm font-medium text-foreground truncate">{user.name}</p>
+                            <p className="text-xs text-muted-foreground truncate">{user.role} · {user.email}</p>
+                          </div>
+                          <Button size="sm"
+                            disabled={alreadyAdded || inviting}
+                            onClick={() => handleInviteRegistered(user, inviteRole)}
+                            className={"rounded-xl text-xs flex-shrink-0 " +
+                              (alreadyAdded ? "bg-green-500/20 text-green-400 hover:bg-green-500/20" : "bg-primary hover:bg-primary/80 text-background")}>
+                            {alreadyAdded ? <><Check className="w-3 h-3 mr-1" />Adicionado</> : "Adicionar"}
+                          </Button>
                         </div>
-                        <div className="flex-1 min-w-0">
-                          <p className="text-sm font-medium text-foreground truncate">{user.name}</p>
-                          <p className="text-xs text-muted-foreground truncate">{user.role} · {user.email}</p>
-                        </div>
-                        <Button size="sm"
-                          disabled={alreadyAdded || inviting}
-                          onClick={() => handleInviteRegistered(user, inviteRole)}
-                          className={"rounded-xl text-xs flex-shrink-0 " +
-                            (alreadyAdded ? "bg-green-500/20 text-green-400 hover:bg-green-500/20" : "bg-primary hover:bg-primary/80 text-background")}>
-                          {alreadyAdded ? <><Check className="w-3 h-3 mr-1" />Adicionado</> : "Adicionar"}
-                        </Button>
-                      </div>
-                    );
-                  })
+                      );
+                    })}
+                    {hasMoreProfiles && !inviteSearch.trim() && (
+                      <button onClick={loadMoreProfiles} disabled={loadingMoreProfiles}
+                        className="w-full text-xs text-primary hover:text-primary/80 py-2 text-center flex items-center justify-center gap-1">
+                        {loadingMoreProfiles ? <><Loader2 className="w-3 h-3 animate-spin" />Carregando...</> : "Carregar mais usuários"}
+                      </button>
+                    )}
+                  </>
                 )}
               </div>
             </>

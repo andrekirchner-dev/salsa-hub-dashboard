@@ -12,7 +12,7 @@ import {
   query, orderBy, doc, getDoc, setDoc,
 } from "firebase/firestore";
 
-const CAN_CREATE_MEETING = ["CEO", "CFO", "CMO", "COO", "Gerente", "Coordenador"];
+import { canCreateMeeting } from "@/lib/permissions";
 const WEEK_DAYS = ["Seg", "Ter", "Qua", "Qui", "Sex", "Sáb", "Dom"];
 const MONTHS_PT = [
   "Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
@@ -268,7 +268,7 @@ export default function Calendar() {
     );
   };
 
-  const canCreate = userRole !== null && CAN_CREATE_MEETING.includes(userRole);
+  const canCreate = userRole !== null && canCreateMeeting(userRole);
   const selectedDayMeetings = meetings.filter(m => m.date === dayStr(selectedDay)).sort((a, b) => a.time.localeCompare(b.time));
   const filteredProfiles = allProfileUsers.filter(u =>
     !participantSearch.trim() ||
