@@ -12,7 +12,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { auth, db } from "@/integrations/firebase/client";
 import {
   collection, onSnapshot, addDoc, setDoc, updateDoc, getDoc, getDocs,
-  serverTimestamp, query, orderBy, where, doc,
+  serverTimestamp, query, orderBy, where, doc, runTransaction,
 } from "firebase/firestore";
 
 // shared product reference stored when another user adds you to their product
@@ -102,34 +102,47 @@ export default function Products() {
     setVincularLoading(true);
     setVincularError("");
     try {
-      // Look up the linkCode
-      const codesSnap = await getDocs(query(collection(db, "linkCodes"), where("code", "==", code), where("active", "==", true)));
+      // Pré-validação: localizar o documento do código
+      const codesSnap = await getDocs(
+        query(collection(db, "linkCodes"), where("code", "==", code), where("active", "==", true))
+      );
       if (codesSnap.empty) { setVincularError("Código não encontrado ou inativo."); return; }
-      const codeDoc = codesSnap.docs[0];
-      const codeData = codeDoc.data();
-      if (codeData.usedCount >= codeData.maxUses) { setVincularError("Este código atingiu o limite de usos."); return; }
+      const codeDocRef = codesSnap.docs[0].ref;
+      const codeData = codesSnap.docs[0].data();
       if (codeData.ownerUid === uid) { setVincularError("Você não pode vincular seu próprio produto."); return; }
 
-      // Fetch the referenced product from the original owner
+      // Pré-validar produto antes da transação (leitura barata fora da tx)
       const productSnap = await getDoc(doc(db, "users", codeData.ownerUid, "products", codeData.productId));
       if (!productSnap.exists()) { setVincularError("Produto referenciado não encontrado."); return; }
       const productData = productSnap.data();
 
-      // Copy to CEO's products collection with isLinked flag
-      await setDoc(doc(db, "users", uid, "products", codeData.productId), {
-        ...productData,
-        isLinked: true,
-        linkedFromUid: codeData.ownerUid,
-        linkedCode: code,
-        linkedAt: serverTimestamp(),
-        progress: productData.progress ?? 0,
-        createdAt: productData.createdAt ?? serverTimestamp(),
+      // runTransaction garante atomicidade: verifica limite E incrementa em uma
+      // única operação — elimina a race condition onde múltiplos usuários
+      // poderiam usar o mesmo código simultaneamente.
+      await runTransaction(db, async (tx) => {
+        const freshCode = await tx.get(codeDocRef);
+        if (!freshCode.exists() || !freshCode.data().active) {
+          throw new Error("Código inválido ou inativo.");
+        }
+        const fresh = freshCode.data();
+        if (fresh.usedCount >= fresh.maxUses) {
+          throw new Error("Este código já atingiu o limite de usos.");
+        }
+        // Incremento atômico dentro da transação
+        tx.update(codeDocRef, { usedCount: fresh.usedCount + 1 });
+        // Vincula o produto ao usuário atual
+        tx.set(doc(db, "users", uid, "products", codeData.productId), {
+          ...productData,
+          isLinked: true,
+          linkedFromUid: codeData.ownerUid,
+          linkedCode: code,
+          linkedAt: serverTimestamp(),
+          progress: productData.progress ?? 0,
+          createdAt: productData.createdAt ?? serverTimestamp(),
+        });
       });
 
-      // Increment usedCount on the linkCode
-      await updateDoc(doc(db, "linkCodes", codeDoc.id), { usedCount: (codeData.usedCount ?? 0) + 1 });
-
-      // Notify original product creator
+      // Notifica o criador do produto (fora da transação, sem impacto no atomismo)
       await addDoc(collection(db, "users", codeData.ownerUid, "notifications"), {
         type: "product",
         title: "Produto vinculado!",
@@ -140,8 +153,8 @@ export default function Products() {
 
       setLinkCodeInput("");
       setVincularOpen(false);
-    } catch (e) {
-      setVincularError("Erro ao vincular produto. Tente novamente.");
+    } catch (e: any) {
+      setVincularError(e?.message ?? "Erro ao vincular produto. Tente novamente.");
     } finally {
       setVincularLoading(false);
     }

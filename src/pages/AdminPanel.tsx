@@ -12,16 +12,21 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { auth, db } from "@/integrations/firebase/client";
 import {
   collection, onSnapshot, addDoc, updateDoc, deleteDoc,
-  doc, query, orderBy, serverTimestamp, getDocs,
+  doc, query, orderBy, serverTimestamp, getDocs, getDoc, setDoc,
 } from "firebase/firestore";
 import { useNavigate } from "react-router-dom";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 const ADMIN_EMAILS = ["kirchner.andre@gmail.com", "lucas.xaviercr97@gmail.com"];
-const ADMIN_PINS: Record<string, string> = {
-  "kirchner.andre@gmail.com": "kirchner",
-  "lucas.xaviercr97@gmail.com": "xavier",
-};
+
+// SHA-256 via Web Crypto API (built-in, zero dependencies)
+async function hashPin(pin: string): Promise<string> {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(pin);
+  const hashBuffer = await crypto.subtle.digest("SHA-256", data);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  return hashArray.map(b => b.toString(16).padStart(2, "0")).join("");
+}
 
 // ── Interfaces ────────────────────────────────────────────────────────────────
 interface Company { id: string; name: string; plan: string; members: number; createdAt: any; status: "Ativa" | "Inativa"; }
@@ -57,17 +62,45 @@ function generateCode(role: string): string {
 }
 
 // ── PIN Lock Screen ───────────────────────────────────────────────────────────
+// PINs são armazenados como hashes SHA-256 em Firestore (adminConfig/pins),
+// coleção somente legível por app owners. Nenhum PIN em plaintext no código.
 function PinLockScreen({ onUnlock, userEmail }: { onUnlock: () => void; userEmail: string }) {
   const navigate = useNavigate();
   const [pin, setPin] = useState("");
   const [show, setShow] = useState(false);
   const [error, setError] = useState(false);
   const [shaking, setShaking] = useState(false);
+  const [pinState, setPinState] = useState<"loading" | "setup" | "verify" | "denied">("loading");
+  const [storedHash, setStoredHash] = useState<string | null>(null);
+  const [newPin, setNewPin] = useState("");
+  const [confirmPin, setConfirmPin] = useState("");
+  const [setupError, setSetupError] = useState("");
+  const [settingUp, setSettingUp] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  // Carrega o hash do PIN do Firestore ao montar
+  useEffect(() => {
+    getDoc(doc(db, "adminConfig", "pins"))
+      .then(snap => {
+        if (snap.exists()) {
+          const hash = snap.data()?.[userEmail];
+          if (hash) {
+            setStoredHash(hash);
+            setPinState("verify");
+          } else {
+            setPinState("setup"); // Admin existe mas ainda não definiu PIN
+          }
+        } else {
+          setPinState("setup"); // Primeiro acesso - documento não criado ainda
+        }
+      })
+      .catch(() => setPinState("denied")); // Permissão negada = não é admin
+  }, [userEmail]);
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const correctPin = ADMIN_PINS[userEmail] ?? "";
-    if (correctPin && pin === correctPin) {
+    if (!storedHash || !pin.trim()) return;
+    const inputHash = await hashPin(pin.trim());
+    if (inputHash === storedHash) {
       onUnlock();
     } else {
       setError(true);
@@ -77,79 +110,157 @@ function PinLockScreen({ onUnlock, userEmail }: { onUnlock: () => void; userEmai
     }
   };
 
+  const handleSetupPin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSetupError("");
+    if (newPin.length < 4) { setSetupError("PIN deve ter ao menos 4 caracteres."); return; }
+    if (newPin !== confirmPin) { setSetupError("Os PINs não coincidem."); return; }
+    setSettingUp(true);
+    try {
+      const hash = await hashPin(newPin);
+      // Preserva hashes de outros admins no mesmo documento
+      const existing = await getDoc(doc(db, "adminConfig", "pins"));
+      const currentData = existing.exists() ? existing.data() : {};
+      await setDoc(doc(db, "adminConfig", "pins"), { ...currentData, [userEmail]: hash });
+      setStoredHash(hash);
+      setPinState("verify");
+      setNewPin(""); setConfirmPin("");
+    } catch {
+      setSetupError("Erro ao salvar PIN. Verifique sua conexão e tente novamente.");
+    } finally {
+      setSettingUp(false);
+    }
+  };
+
+  const shakeClass = shaking ? "animate-[shake_0.4s_ease-in-out]" : "";
+
+  // ── Estados de carregamento e negação ──
+  if (pinState === "loading") {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <div className="w-6 h-6 border-2 border-primary/40 border-t-primary rounded-full animate-spin" />
+      </div>
+    );
+  }
+
+  if (pinState === "denied") {
+    return (
+      <div className="min-h-screen bg-background flex flex-col items-center justify-center p-6 text-center">
+        <div className="w-20 h-20 rounded-3xl bg-red-500/10 border border-red-500/20 flex items-center justify-center mb-6">
+          <AlertTriangle className="w-9 h-9 text-red-400" />
+        </div>
+        <h1 className="text-2xl font-bold text-foreground mb-2">Acesso Negado</h1>
+        <p className="text-sm text-muted-foreground mb-6">Sua conta não tem permissão para acessar esta área.</p>
+        <Button onClick={() => navigate(-1)} className="rounded-2xl">Voltar</Button>
+      </div>
+    );
+  }
+
+  // ── Setup do PIN (primeiro acesso ou redefinição) ──
+  if (pinState === "setup") {
+    return (
+      <div className="min-h-screen bg-background flex flex-col items-center justify-center p-6">
+        <button onClick={() => navigate(-1)} className="absolute top-4 left-4 p-2 rounded-xl hover:bg-surface-mid transition-colors">
+          <ArrowLeft className="w-5 h-5 text-muted-foreground" />
+        </button>
+        <div className="w-full max-w-sm">
+          <div className="flex justify-center mb-8">
+            <div className="w-20 h-20 rounded-3xl bg-primary/10 border border-primary/20 flex items-center justify-center">
+              <Key className="w-9 h-9 text-primary" />
+            </div>
+          </div>
+          <h1 className="text-2xl font-bold text-foreground text-center mb-2 font-sans">Criar PIN de Acesso</h1>
+          <p className="text-sm text-muted-foreground text-center mb-8">
+            Defina um PIN seguro. Ele será armazenado criptografado — nem o servidor conhece o valor.
+          </p>
+          <form onSubmit={handleSetupPin} className="space-y-4">
+            {setupError && (
+              <p className="text-sm text-red-400 text-center flex items-center justify-center gap-1.5">
+                <AlertTriangle className="w-3.5 h-3.5" />{setupError}
+              </p>
+            )}
+            <div className="relative">
+              <Input
+                type={show ? "text" : "password"}
+                value={newPin}
+                onChange={e => { setNewPin(e.target.value); setSetupError(""); }}
+                placeholder="Novo PIN (mín. 4 caracteres)..."
+                className="bg-surface-mid border-0 rounded-2xl text-base py-4 pr-12 text-center tracking-widest"
+                autoFocus autoComplete="new-password"
+              />
+              <button type="button" onClick={() => setShow(p => !p)} className="absolute right-4 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors">
+                {show ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+              </button>
+            </div>
+            <Input
+              type={show ? "text" : "password"}
+              value={confirmPin}
+              onChange={e => { setConfirmPin(e.target.value); setSetupError(""); }}
+              placeholder="Confirmar PIN..."
+              className="bg-surface-mid border-0 rounded-2xl text-base py-4 text-center tracking-widest"
+              autoComplete="new-password"
+            />
+            <Button type="submit" disabled={!newPin.trim() || !confirmPin.trim() || settingUp}
+              className="w-full rounded-2xl bg-primary hover:bg-primary/80 text-background py-3 text-base font-semibold">
+              {settingUp ? "Salvando..." : <><Shield className="w-4 h-4 mr-2" />Criar PIN</>}
+            </Button>
+          </form>
+        </div>
+        <style>{`@keyframes shake{0%,100%{transform:translateX(0)}20%{transform:translateX(-8px)}40%{transform:translateX(8px)}60%{transform:translateX(-8px)}80%{transform:translateX(4px)}}`}</style>
+      </div>
+    );
+  }
+
+  // ── Verificação do PIN (fluxo normal) ──
   return (
     <div className="min-h-screen bg-background flex flex-col items-center justify-center p-6">
-      <button
-        onClick={() => navigate(-1)}
-        className="absolute top-4 left-4 p-2 rounded-xl hover:bg-surface-mid transition-colors"
-      >
+      <button onClick={() => navigate(-1)} className="absolute top-4 left-4 p-2 rounded-xl hover:bg-surface-mid transition-colors">
         <ArrowLeft className="w-5 h-5 text-muted-foreground" />
       </button>
-
       <div className="w-full max-w-sm">
-        {/* Icon */}
         <div className="flex justify-center mb-8">
           <div className="w-20 h-20 rounded-3xl bg-primary/10 border border-primary/20 flex items-center justify-center">
             <Lock className="w-9 h-9 text-primary" />
           </div>
         </div>
-
         <h1 className="text-2xl font-bold text-foreground text-center mb-2 font-sans">Área Administrativa</h1>
         <p className="text-sm text-muted-foreground text-center mb-8">
           Digite o PIN para acessar o painel de controle
         </p>
-
         <form onSubmit={handleSubmit} className="space-y-4">
-          <div className={`relative transition-all ${shaking ? "animate-[shake_0.4s_ease-in-out]" : ""}`}>
+          <div className={`relative transition-all ${shakeClass}`}>
             <Input
               type={show ? "text" : "password"}
               value={pin}
               onChange={e => { setPin(e.target.value); setError(false); }}
               placeholder="Digite o PIN..."
               className={`bg-surface-mid border-0 rounded-2xl text-base py-4 pr-12 text-center tracking-widest ${error ? "ring-2 ring-red-500/50" : ""}`}
-              autoFocus
-              autoComplete="off"
+              autoFocus autoComplete="off"
             />
-            <button
-              type="button"
-              onClick={() => setShow(p => !p)}
-              className="absolute right-4 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
-            >
+            <button type="button" onClick={() => setShow(p => !p)} className="absolute right-4 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors">
               {show ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
             </button>
           </div>
-
           {error && (
             <p className="text-sm text-red-400 text-center flex items-center justify-center gap-1.5">
-              <AlertTriangle className="w-3.5 h-3.5" />
-              PIN incorreto. Tente novamente.
+              <AlertTriangle className="w-3.5 h-3.5" />PIN incorreto. Tente novamente.
             </p>
           )}
-
-          <Button
-            type="submit"
-            disabled={!pin.trim()}
-            className="w-full rounded-2xl bg-primary hover:bg-primary/80 text-background py-3 text-base font-semibold"
-          >
-            <Shield className="w-4 h-4 mr-2" />
-            Acessar Painel
+          <Button type="submit" disabled={!pin.trim()}
+            className="w-full rounded-2xl bg-primary hover:bg-primary/80 text-background py-3 text-base font-semibold">
+            <Shield className="w-4 h-4 mr-2" />Acessar Painel
           </Button>
+          <button type="button"
+            onClick={() => { setPinState("setup"); setPin(""); setError(false); }}
+            className="w-full text-xs text-muted-foreground hover:text-foreground text-center mt-2 transition-colors">
+            Esqueci o PIN / Redefinir
+          </button>
         </form>
-
         <p className="text-xs text-muted-foreground text-center mt-6 opacity-50">
           Acesso restrito ao administrador do sistema
         </p>
       </div>
-
-      <style>{`
-        @keyframes shake {
-          0%, 100% { transform: translateX(0); }
-          20% { transform: translateX(-8px); }
-          40% { transform: translateX(8px); }
-          60% { transform: translateX(-8px); }
-          80% { transform: translateX(4px); }
-        }
-      `}</style>
+      <style>{`@keyframes shake{0%,100%{transform:translateX(0)}20%{transform:translateX(-8px)}40%{transform:translateX(8px)}60%{transform:translateX(-8px)}80%{transform:translateX(4px)}}`}</style>
     </div>
   );
 }
